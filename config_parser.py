@@ -14,6 +14,10 @@ class PluginConfig:
     user_id: str = ""
     user_password: str = ""
     hub_ip: str = ""
+    wifi_ssid: str = ""
+    wifi_password: str = ""
+    wifi_security_mode: int = 4
+    setup_ip: str = "255.255.255.255"
     ir_codes: Dict[str, str] = field(default_factory=dict)
     rf_codes: Dict[str, str] = field(default_factory=dict)
 
@@ -72,10 +76,20 @@ def build_config(custom_params: dict) -> PluginConfig:
     """Build PluginConfig from raw PG3 custom params."""
     params = custom_params or {}
 
+    wifi_security_mode = 4
+    try:
+        wifi_security_mode = int(params.get("WIFI_SECURITY_MODE", 4))
+    except (TypeError, ValueError):
+        wifi_security_mode = 4
+
     return PluginConfig(
         user_id=str(params.get("USER_ID", "")).strip(),
         user_password=str(params.get("USER_PASSWORD", "")).strip(),
         hub_ip=str(params.get("HUB_IP", "")).strip(),
+        wifi_ssid=str(params.get("WIFI_SSID", "")).strip(),
+        wifi_password=str(params.get("WIFI_PASSWORD", "")).strip(),
+        wifi_security_mode=wifi_security_mode,
+        setup_ip=str(params.get("SETUP_IP", "255.255.255.255")).strip() or "255.255.255.255",
         ir_codes=parse_code_map(str(params.get("IR_CODES", ""))),
         rf_codes=parse_code_map(str(params.get("RF_CODES", ""))),
     )

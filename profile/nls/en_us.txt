@@ -6,6 +6,7 @@ ST-nlssetup-TIME-NAME=Last Poll Time
 CMD-nlssetup-DON-NAME=Heartbeat On
 CMD-nlssetup-DOF-NAME=Heartbeat Off
 CMD-nlssetup-UPDATE-NAME=Reload Configuration
+CMD-nlssetup-APSETUP-NAME=Provision AP Setup
 
 ND-blirremote-NAME=Broadlink IR Remote
 ND-blirremote-ICON=GenericCtrl

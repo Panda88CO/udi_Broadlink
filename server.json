@@ -20,6 +20,10 @@
     "USER_ID": "",
     "USER_PASSWORD": "",
     "HUB_IP": "",
+    "WIFI_SSID": "",
+    "WIFI_PASSWORD": "",
+    "WIFI_SECURITY_MODE": "4",
+    "SETUP_IP": "255.255.255.255",
     "IR_CODES": "{\"TV Power\": \"\"}",
     "RF_CODES": "{\"Garage Toggle\": \"\"}"
   },

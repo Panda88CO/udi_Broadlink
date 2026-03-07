@@ -38,6 +38,10 @@ Notes:
 - `USER_ID` and `USER_PASSWORD` are currently validated and stored, but not required by local RM protocol itself.
 - `HUB_IP` is used to connect/authenticate to the Broadlink hub.
 
+AP provisioning (optional):
+- `WIFI_SSID`, `WIFI_PASSWORD`, `WIFI_SECURITY_MODE`, `SETUP_IP`
+- Run setup-node command `Provision AP Setup` to call `broadlink.setup(...)` when device is in AP mode.
+
 Code parameters:
 - `IR_CODES`
 - `RF_CODES`
@@ -63,8 +67,9 @@ Code value encoding:
 
 - On startup and parameter updates (`handleParams`), the node server:
   - Parses config
-  - Connects/authenticates to Broadlink hub
+  - Connects/authenticates to Broadlink hub using `hello()` + `auth()` for normal runtime control
   - Builds/rebuilds IR and RF code subnodes from configured code maps
+- AP provisioning is a separate explicit action (`APSETUP`) that calls `broadlink.setup()`.
 - Each code subnode exposes `TXCODE` (Send Code)
 - IR/RF parent nodes expose `LEARNCODE` to learn new packets from the hub
 - Short poll toggles heartbeat (`DON`/`DOF`) on controller

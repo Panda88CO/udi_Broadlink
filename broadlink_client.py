@@ -129,6 +129,16 @@ class BroadlinkHubClient:
 
         raise TimeoutError("No learned packet received before timeout")
 
+    def provision_ap(self, ssid: str, password: str, security_mode: int = 4, setup_ip: str = "255.255.255.255") -> bool:
+        """Provision a Broadlink device in AP mode using broadlink.setup."""
+        if not ssid:
+            raise ValueError("WIFI_SSID is required for AP setup")
+        if security_mode < 0 or security_mode > 4:
+            raise ValueError("WIFI_SECURITY_MODE must be between 0 and 4")
+
+        broadlink.setup(ssid=ssid, password=password, security_mode=security_mode, ip_address=setup_ip)
+        return True
+
 
 def decode_code_string(raw: str) -> bytes:
     """Decode user code strings into Broadlink packet bytes.

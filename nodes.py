@@ -306,6 +306,22 @@ class BroadlinkController(BaseNode):
         self._reconcile_nodes()
         self._refresh_parents()
 
+    def ap_setup(self, command=None):
+        """Provision Broadlink device while it is in AP mode."""
+        try:
+            temp_client = BroadlinkHubClient(hub_ip=self.config.hub_ip)
+            temp_client.provision_ap(
+                ssid=self.config.wifi_ssid,
+                password=self.config.wifi_password,
+                security_mode=self.config.wifi_security_mode,
+                setup_ip=self.config.setup_ip,
+            )
+            self.poly.Notices["apsetup"] = "AP setup packet sent. Put device in AP mode and wait for it to join Wi-Fi."
+            LOGGER.info("Sent broadlink.setup AP provisioning packet")
+        except Exception as err:
+            LOGGER.error("AP setup failed: %s", err)
+            self.poly.Notices["apsetup"] = f"AP setup failed: {err}"
+
     def _refresh_parents(self):
         if self.ir_parent:
             self.ir_parent.update_status()
@@ -398,4 +414,5 @@ class BroadlinkController(BaseNode):
 
     commands = {
         "UPDATE": force_update,
+        "APSETUP": ap_setup,
     }
