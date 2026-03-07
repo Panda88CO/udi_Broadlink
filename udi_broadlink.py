@@ -9,7 +9,6 @@ from nodes import BroadlinkController, VERSION
 
 LOGGER = udi_interface.LOGGER
 
-
 if __name__ == "__main__":
     try:
         polyglot = udi_interface.Interface([])
