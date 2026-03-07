@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<editors>
+  <editor id="status">
+    <range uom="25" subset="0,1" nls="status" />
+  </editor>
+
+</editors>

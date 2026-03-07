@@ -1,0 +1,20 @@
+<nodeDefs> 
+ <nodeDef id="setup" nls="nlssetup">
+      <editors />
+      <sts>
+         <st id="ST"  editor="connect" />
+         <st id="GV1"  editor="ready" />         
+         <st id="TIME"  editor="unixtime" />
+         <!--- st id="GV20" editor="suspendstate" /-->
+      </sts>
+      <cmds>
+         <sends>
+            <cmd id="DON" /> 
+            <cmd id="DOF" /> 
+         </sends>
+         <!--<accepts>
+            <cmd id="EPOCHTIME"  /> 
+         </accepts>-->
+      </cmds>
+   </nodeDef> 
+</nodeDefs> 

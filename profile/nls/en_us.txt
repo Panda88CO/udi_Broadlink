@@ -1,0 +1,3 @@
+
+ND-setup-NAME=YoLink Setup
+ND-setup-ICON=GenericCtrl
