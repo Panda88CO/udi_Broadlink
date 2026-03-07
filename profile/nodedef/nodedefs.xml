@@ -1,20 +1,83 @@
-<nodeDefs> 
- <nodeDef id="setup" nls="nlssetup">
+<nodeDefs>
+   <nodeDef id="setup" nls="nlssetup">
       <editors />
       <sts>
-         <st id="ST"  editor="connect" />
-         <st id="GV1"  editor="ready" />         
-         <st id="TIME"  editor="unixtime" />
-         <!--- st id="GV20" editor="suspendstate" /-->
+         <st id="ST" editor="connect" />
+         <st id="GV1" editor="yesno" />
+         <st id="TIME" editor="unixtime" />
       </sts>
       <cmds>
          <sends>
-            <cmd id="DON" /> 
-            <cmd id="DOF" /> 
+            <cmd id="DON" />
+            <cmd id="DOF" />
          </sends>
-         <!--<accepts>
-            <cmd id="EPOCHTIME"  /> 
-         </accepts>-->
+         <accepts>
+            <cmd id="UPDATE" />
+         </accepts>
       </cmds>
-   </nodeDef> 
-</nodeDefs> 
+   </nodeDef>
+
+   <nodeDef id="blirremote" nls="nlsblirremote">
+      <editors />
+      <sts>
+         <st id="ST" editor="txstatus" />
+         <st id="GV0" editor="count" />
+         <st id="GV30" editor="yesno" />
+         <st id="TIME" editor="unixtime" />
+      </sts>
+      <cmds>
+         <accepts>
+            <cmd id="UPDATE" />
+            <cmd id="QUERY" />
+            <cmd id="LEARNCODE" />
+         </accepts>
+      </cmds>
+   </nodeDef>
+
+   <nodeDef id="blrfremote" nls="nlsblrfremote">
+      <editors />
+      <sts>
+         <st id="ST" editor="txstatus" />
+         <st id="GV0" editor="count" />
+         <st id="GV30" editor="yesno" />
+         <st id="TIME" editor="unixtime" />
+      </sts>
+      <cmds>
+         <accepts>
+            <cmd id="UPDATE" />
+            <cmd id="QUERY" />
+            <cmd id="LEARNCODE" />
+         </accepts>
+      </cmds>
+   </nodeDef>
+
+   <nodeDef id="blircode" nls="nlsblircode">
+      <editors />
+      <sts>
+         <st id="ST" editor="txstatus" />
+         <st id="GV30" editor="yesno" />
+         <st id="TIME" editor="unixtime" />
+      </sts>
+      <cmds>
+         <accepts>
+            <cmd id="TXCODE" />
+            <cmd id="QUERY" />
+         </accepts>
+      </cmds>
+   </nodeDef>
+
+   <nodeDef id="blrfcode" nls="nlsblrfcode">
+      <editors />
+      <sts>
+         <st id="ST" editor="txstatus" />
+         <st id="GV30" editor="yesno" />
+         <st id="TIME" editor="unixtime" />
+      </sts>
+      <cmds>
+         <accepts>
+            <cmd id="TXCODE" />
+            <cmd id="QUERY" />
+         </accepts>
+      </cmds>
+   </nodeDef>
+</nodeDefs>

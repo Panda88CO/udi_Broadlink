@@ -1,0 +1,28 @@
+{
+  "credits": [
+    {
+      "title": "udi-broadlink",
+      "author": "chris",
+      "version": "0.1.0",
+      "date": "2026-03-07",
+      "source": "https://github.com/chris/udi_Broadlink"
+    }
+  ],
+  "name": "Broadlink Remote",
+  "docs": "README.md",
+  "type": "python3",
+  "executable": "udi_broadlink.py",
+  "install": "install.sh",
+  "shortPoll": 60,
+  "longPoll": 300,
+  "profile_version": "0.1.0",
+  "customParams": {
+    "USER_ID": "",
+    "USER_PASSWORD": "",
+    "HUB_IP": "",
+    "IR_CODES": "{\"TV Power\": \"\"}",
+    "RF_CODES": "{\"Garage Toggle\": \"\"}"
+  },
+  "restart": true,
+  "language": "python3"
+}

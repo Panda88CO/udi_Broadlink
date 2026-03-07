@@ -1,66 +1,102 @@
-# udi-yolink
-    Suppport for YoLink devices 
-    Suggest to install on PG3x from version 1.1.x going forward.  PG3x updated to Python 3.11.  Still works under PG3 but cannot guarantee for how long it will be possible 
-    
-## Yolink Node server
-    Enables yoLink (https://shop.yosmart.com/) devices to be controlled using the ISY
-    Current list of devices supported is as follows:
-    
-    'Switch', 'THSensor', 'MultiOutlet', 'DoorSensor','Manipulator', 
-    'MotionSensor', 'Outlet', 'GarageDoor', 'LeakSensor', 'Hub', 
-    'SpeakerHub', 'VibrationSensor', 'Finger', 'Lock', 'Dimmer', 'InfraredRemoter', 
-    'PowerFailureAlarm', 'SmartRemoter', 'COSmokeSensor', 'Siren'
-    'WaterMeterController','WaterDepthSensor','LockV2', 'WaterMeterMultiController'
+# udi-broadlink
 
-    
-    Code uses MQTT communications
-    ###SHORT POLL sends a heart beat to the ISY - defauls is 60 sec - It will also chech if data was updated since last update - this can happen when a command has a very slow reply from the cloud - the server uses separate threads from sending commands and receiving results 
-    
-    ###LONG POLL check the online state of the devices (If a device goes off-line it will not be detected until this is called - for battery operated devices it may take even longer as data appear to be cached in the cloud - battery devices are not querried as part of the LONG POLL) 
-    A device will redetected once it is back on-line. 
-    Default is 3600 (1 hour).  
+Broadlink node server for UDI Polyglot v3 (PG3/PG3x), implemented in Python using:
+- `udi_interface`
+- `python-broadlink`
 
-    Note if set too often it will affect battery consumption (especially the Manipulator) - if more than 2 hours - token will expire (but a new one should be obtained)
+Initial scope:
+- Broadlink RM remotes (including RM4 Pro class devices)
+- Two parent nodes: one for IR, one for RF
+- One subnode per configured code string (IR or RF)
 
+The code is intentionally structured for readability and future extension to other Broadlink device families.
 
-## Code
-    Code uses V2 of the yolink API - PAC/UAC authendication - currrently this API only supports a single home (even if APP supports more)
+## Architecture
 
-    Coded in Python 3 - MIT license 
+- `udi_broadlink.py`: Entry point
+- `nodes.py`: Controller + parent/subnode classes
+- `config_parser.py`: PG3 custom parameter parsing
+- `broadlink_client.py`: Wrapper around `python-broadlink` API
 
-## Installation
-    Credentials needs to be added to configuration in YoLink node server under PG3.  In YoLink app goto Settings->Account->Advanced Settings -> User Access Credentials and copy UAID and SecretKey (alternaltive path in app is Profile->Advanced Settings -> User Access Credentials )
-    It is possible to get credentials for each home that is defined but the nodes server can only handle one of them currently 
+Node layout in ISY/IoX:
+- `setup` controller
+- `Broadlink IR` parent node
+- `Broadlink RF` parent node
+- `IR <code_name>` subnodes
+- `RF <code_name>` subnodes
 
-    Enter both UAID and SecretKey under configuration in the node in PG#'s browser page (scroll down if you do not see the fields to enter) - then restart - some times it seems to require 2 restarts to fully get all devices synchronized (I have looked but cannot find pattern)
-    Sometimes a reboot of the ISY is required to make the node server show up correctly.  
+## Configuration
 
-UUAD/SectretKey
-    Credentials needs to be added to configuration in YoLink node server under PG3.  In YoLink app goto Settings->Account->Advanced Settings -> User Access Credentials and copy UAID and SecretKey (alternaltive path in app is Profile->Advanced Settings -> User Access Credentials )
-    It is possible to get credentials for each separate home that is defined in the Yolink app, but the node server can only handle one of them currently.
-    
-TEMP_UNIT
-    Select F or C
-     
-NBR_TTS
-    Number of speakerhub Text to Speech messages to support (see below)
-    
+Configure custom parameters in PG3 Configuration.
 
-## Notes 
-    One node server can only handle 1 home - you can get credential for each home in the APP by selecting the home and get credentials - multiple credentials can exist at the same time, but the node server can only handle one
+Required parameters:
+- `USER_ID`
+- `USER_PASSWORD`
+- `HUB_IP`
 
-    Remaining delay time shown in ISY is estimated - count down is running on node server - not device
+Notes:
+- `USER_ID` and `USER_PASSWORD` are currently validated and stored, but not required by local RM protocol itself.
+- `HUB_IP` is used to connect/authenticate to the Broadlink hub.
 
-    <SpeakerHub> supports up to 10 Test to Speech messages.  You specify the number of messages desired, and then add the text of the message in TTS<n>.  Restart the node server.  After this a restart of the ISY/PoI is needed to transfer the messages to the UI.  The ISY/PoI only reads the file containg the messages during startup 
+Code parameters:
+- `IR_CODES`
+- `RF_CODES`
 
-    In configuraiton TEMP_UNIT can be used to set temperature until to C, F or K
+Each code parameter supports either format:
 
-    YoLink Schedules are now supported 
-    
-    Remaining delay time shown in ISY is estimated - count down is running on node server - not device
-    Schedules are not supported (you can use ISY for the same and the YoLink APP can beused to set schdules)
-    
-    The latest version of the node report latest report time for each device - the AC home automation will get a time.now() option so seconds between the two can be used in conditions 
-    
+1) JSON object
+```json
+{"TV Power": "2600d200...", "Receiver VolumeUp": "b64:AAECAw..."}
+```
 
-    
+2) Multi-line key/value
+```text
+TV Power=2600d200...
+Receiver VolumeUp=b64:AAECAw...
+```
+
+Code value encoding:
+- Hex string (default)
+- Base64 prefixed with `b64:`
+
+## Behavior
+
+- On startup and parameter updates (`handleParams`), the node server:
+  - Parses config
+  - Connects/authenticates to Broadlink hub
+  - Builds/rebuilds IR and RF code subnodes from configured code maps
+- Each code subnode exposes `TXCODE` (Send Code)
+- IR/RF parent nodes expose `LEARNCODE` to learn new packets from the hub
+- Short poll toggles heartbeat (`DON`/`DOF`) on controller
+- Long poll refreshes hub connectivity and updates parent node status
+
+### Learning Workflow
+
+- Run `Learn IR Code` on the `Broadlink IR` parent node or `Learn RF Code` on the `Broadlink RF` parent node.
+- After a successful learn, the node server:
+  - creates a generated code name (for example `Learned IR 01`)
+  - stores the packet in persistent `customdata`
+  - rebuilds dynamic subnodes so the learned code appears as a new subnode
+
+Learned codes persist across restarts through `customdata`.
+
+## Install
+
+### Local test
+```bash
+pip install -r requirements.txt
+python udi_broadlink.py
+```
+
+### PG3 install script
+`install.sh` installs dependencies from `requirements.txt`.
+
+## Extending to Other Broadlink Devices
+
+Design points for extension:
+- Add new methods/classes in `broadlink_client.py` for additional device types
+- Add new nodedefs in `profile/nodedef/nodedefs.xml`
+- Add corresponding node classes in `nodes.py`
+- Add parameter parsing in `config_parser.py`
+
+This keeps Broadlink protocol operations separate from node orchestration logic.
