@@ -46,10 +46,36 @@ class BroadlinkHubClient:
                 raise RuntimeError(f"No Broadlink device found at {self.hub_ip}")
             LOGGER.debug("Broadlink connect: hello() completed in %.3fs", time.time() - start)
 
-            LOGGER.debug("Broadlink connect: auth() start hub_ip=%s", self.hub_ip)
-            auth_start = time.time()
-            device.auth()
-            LOGGER.debug("Broadlink connect: auth() completed in %.3fs", time.time() - auth_start)
+            # Some hubs are temporarily busy; a short retry often succeeds.
+            last_err = None
+            for attempt in range(1, 3):
+                try:
+                    LOGGER.debug("Broadlink connect: auth() start hub_ip=%s attempt=%d", self.hub_ip, attempt)
+                    auth_start = time.time()
+                    device.auth()
+                    LOGGER.debug(
+                        "Broadlink connect: auth() completed in %.3fs attempt=%d",
+                        time.time() - auth_start,
+                        attempt,
+                    )
+                    break
+                except Exception as err:
+                    last_err = err
+                    LOGGER.debug("Broadlink connect: auth() failed attempt=%d err=%s", attempt, err)
+                    if attempt < 2:
+                        # Re-run hello before retrying auth to refresh the session bootstrap.
+                        time.sleep(0.3)
+                        LOGGER.debug("Broadlink connect: retry hello() before auth attempt=%d", attempt + 1)
+                        device = broadlink.hello(self.hub_ip)
+                        if device is None:
+                            raise RuntimeError(f"No Broadlink device found at {self.hub_ip}")
+                    else:
+                        self._device = None
+                        raise RuntimeError(
+                            "Broadlink auth failed after retry. AP setup is only needed when the device is in AP "
+                            "mode or not joined to Wi-Fi. If the hub is already on your LAN, verify HUB_IP and "
+                            f"network reachability. Underlying error: {last_err}"
+                        ) from err
 
             self._device = device
             LOGGER.debug("Broadlink connect: connected=True total_time=%.3fs", time.time() - start)
