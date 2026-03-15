@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
 from typing import Dict
 
 
@@ -27,47 +26,34 @@ def _normalize_code_key(key: str) -> str:
     return str(key).strip()
 
 
-def parse_code_map(raw_value: str) -> Dict[str, str]:
-    """Parse codes from JSON or line format.
+def parse_prefixed_codes(custom_params: dict, prefix: str) -> Dict[str, str]:
+    """Parse code mappings from individual PG3 custom parameters.
 
-    Supported formats:
-    1) JSON object string:
-       {"TV Power": "2600...", "AMP VolUp": "b64:AAEC..."}
-    2) Multi-line key/value pairs:
-       TV Power=2600...
-       AMP VolUp=b64:AAEC...
+    Example:
+    - IR_TV_POWER=2600d200...
+    - RF_FAN_ON=b64:AAECAw...
+
+    The portion after the prefix (for example, ``TV_POWER``) becomes the
+    dynamic node code name.
     """
-    if not raw_value:
-        return {}
-
-    text = str(raw_value).strip()
-    if not text:
-        return {}
-
+    params = custom_params or {}
+    wanted_prefix = f"{prefix.upper()}_"
     parsed: Dict[str, str] = {}
 
-    if text.startswith("{"):
-        data = json.loads(text)
-        if not isinstance(data, dict):
-            raise ValueError("Code map JSON must be an object")
-        for key, value in data.items():
-            norm_key = _normalize_code_key(key)
-            if not norm_key:
-                continue
-            parsed[norm_key] = str(value).strip()
-        return parsed
+    for raw_key, raw_value in params.items():
+        key = str(raw_key).strip()
+        if not key:
+            continue
 
-    for line in text.splitlines():
-        striped = line.strip()
-        if not striped or striped.startswith("#"):
+        if not key.upper().startswith(wanted_prefix):
             continue
-        if "=" not in striped:
-            raise ValueError(f"Invalid code line (missing '='): {striped}")
-        key, value = striped.split("=", 1)
-        norm_key = _normalize_code_key(key)
-        if not norm_key:
+
+        code_name = _normalize_code_key(key[len(wanted_prefix) :])
+        code_value = str(raw_value).strip()
+        if not code_name or not code_value:
             continue
-        parsed[norm_key] = value.strip()
+
+        parsed[code_name] = code_value
 
     return parsed
 
@@ -90,6 +76,6 @@ def build_config(custom_params: dict) -> PluginConfig:
         wifi_password=str(params.get("WIFI_PASSWORD", "")).strip(),
         wifi_security_mode=wifi_security_mode,
         setup_ip=str(params.get("SETUP_IP", "255.255.255.255")).strip() or "255.255.255.255",
-        ir_codes=parse_code_map(str(params.get("IR_CODES", ""))),
-        rf_codes=parse_code_map(str(params.get("RF_CODES", ""))),
+        ir_codes=parse_prefixed_codes(params, "IR"),
+        rf_codes=parse_prefixed_codes(params, "RF"),
     )

@@ -43,20 +43,19 @@ AP provisioning (optional):
 - Run setup-node command `Provision AP Setup` to call `broadlink.setup(...)` when device is in AP mode.
 
 Code parameters:
-- `IR_CODES`
-- `RF_CODES`
+- Any custom parameter whose name starts with `IR_`
+- Any custom parameter whose name starts with `RF_`
 
-Each code parameter supports either format:
+Naming rule:
+- Prefix is required (`IR_` or `RF_`).
+- The text after the prefix becomes the node code name.
 
-1) JSON object
-```json
-{"TV Power": "2600d200...", "Receiver VolumeUp": "b64:AAECAw..."}
-```
-
-2) Multi-line key/value
+Examples:
 ```text
-TV Power=2600d200...
-Receiver VolumeUp=b64:AAECAw...
+IR_TV_POWER=2600d200...
+IR_RECEIVER_VOL_UP=b64:AAECAw...
+RF_FAN_ON=aa55...
+RF_FAN_OFF=bb66...
 ```
 
 Code value encoding:
@@ -68,7 +67,8 @@ Code value encoding:
 - On startup and parameter updates (`handleParams`), the node server:
   - Parses config
   - Connects/authenticates to Broadlink hub using `hello()` + `auth()` for normal runtime control
-  - Builds/rebuilds IR and RF code subnodes from configured code maps
+  - Scans custom parameters for `IR_*` and `RF_*` code entries
+  - Builds/rebuilds IR and RF code subnodes from those entries
 - AP provisioning is a separate explicit action (`APSETUP`) that calls `broadlink.setup()`.
 - Each code subnode exposes `TXCODE` (Send Code)
 - IR/RF parent nodes expose `LEARNCODE` to learn new packets from the hub

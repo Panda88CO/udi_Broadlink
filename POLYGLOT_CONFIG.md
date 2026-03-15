@@ -19,25 +19,19 @@ After setting these, run the setup-node command `Provision AP Setup`.
 
 ## Code Configuration
 
-Two parameters define the transmit codes and automatically create subnodes:
+Define each transmit code as its own custom parameter:
 
-- `IR_CODES`
-- `RF_CODES`
+- `IR_<name>` for IR codes
+- `RF_<name>` for RF codes
 
-Both support either JSON or `key=value` lines.
+The `<name>` portion becomes the code node name.
 
-### JSON example
-```json
-{
-  "TV Power": "2600d200949512...",
-  "Receiver Vol Up": "b64:AAECAwQFBgc..."
-}
-```
-
-### key/value example
+### Example
 ```text
-TV Power=2600d200949512...
-Receiver Vol Up=b64:AAECAwQFBgc...
+IR_TV_POWER=2600d200949512...
+IR_RECEIVER_VOL_UP=b64:AAECAwQFBgc...
+RF_FAN_ON=aa55...
+RF_FAN_OFF=bb66...
 ```
 
 Encoding options:
@@ -46,7 +40,7 @@ Encoding options:
 
 ## Operational Notes
 
-- Changing `IR_CODES` or `RF_CODES` updates the code subnodes.
+- Changing any `IR_*` or `RF_*` parameter updates the code subnodes.
 - Each code subnode has a `TXCODE` command to send its packet.
 - IR and RF parent nodes support `LEARNCODE` to learn packets directly from the hub and create subnodes automatically.
 - Setup node supports `APSETUP` ("Provision AP Setup") which calls `broadlink.setup(...)`.
