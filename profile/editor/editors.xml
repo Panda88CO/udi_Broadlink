@@ -12,6 +12,10 @@
     <range uom="25" subset="0,1,2,99" nls="txstatus" />
   </editor>
 
+  <editor id="learnstate">
+    <range uom="25" subset="0,1,2,3,4,5,6" nls="learnstate" />
+  </editor>
+
   <editor id="count">
     <range uom="56" min="0" max="255" step="1" />
   </editor>

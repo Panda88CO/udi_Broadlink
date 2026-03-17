@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 from threading import Lock
 import time
+from typing import Callable
 
 import broadlink
 import udi_interface
@@ -119,7 +120,12 @@ class BroadlinkHubClient:
             LOGGER.debug("Broadlink send_code: send_data() completed in %.3fs", time.time() - start)
             return True
 
-    def learn_ir(self, timeout_sec: int = 30, poll_interval: float = 1.0) -> bytes:
+    def learn_ir(
+        self,
+        timeout_sec: int = 30,
+        poll_interval: float = 1.0,
+        status_callback: Callable[[str], None] | None = None,
+    ) -> bytes:
         """Learn a single IR packet and return raw Broadlink bytes."""
         with self._lock:
             if self._device is None:
@@ -132,11 +138,23 @@ class BroadlinkHubClient:
                 poll_interval,
             )
             self._device.enter_learning()
-            packet = self._wait_for_learned_packet(timeout_sec=timeout_sec, poll_interval=poll_interval)
+            if status_callback:
+                status_callback("enter_learning")
+                status_callback("awaiting_button")
+            packet = self._wait_for_learned_packet(
+                timeout_sec=timeout_sec,
+                poll_interval=poll_interval,
+                status_callback=status_callback,
+            )
             LOGGER.debug("Broadlink learn_ir: packet received packet_len=%d", len(packet))
             return packet
 
-    def learn_rf(self, timeout_sec: int = 45, poll_interval: float = 1.0) -> bytes:
+    def learn_rf(
+        self,
+        timeout_sec: int = 45,
+        poll_interval: float = 1.0,
+        status_callback: Callable[[str], None] | None = None,
+    ) -> bytes:
         """Learn a single RF packet and return raw Broadlink bytes.
 
         For devices that support RF sweep APIs we use sweep->check_frequency->find_rf_packet.
@@ -153,6 +171,9 @@ class BroadlinkHubClient:
                     timeout_sec,
                     poll_interval,
                 )
+                if status_callback:
+                    status_callback("sweep_started")
+                    status_callback("awaiting_first_press")
                 self._device.sweep_frequency()
                 start = time.time()
                 found = False
@@ -167,6 +188,8 @@ class BroadlinkHubClient:
                         continue
                     if found:
                         LOGGER.debug("Broadlink learn_rf: frequency found=%s", frequency)
+                        if status_callback:
+                            status_callback("frequency_found")
                         break
 
                 if not found:
@@ -178,19 +201,42 @@ class BroadlinkHubClient:
                     raise TimeoutError("RF frequency sweep timed out")
 
                 LOGGER.debug("Broadlink learn_rf: find_rf_packet() start frequency=%s", frequency)
-                self._device.find_rf_packet(frequency)
-                packet = self._wait_for_learned_packet(timeout_sec=timeout_sec, poll_interval=poll_interval)
+                try:
+                    self._device.find_rf_packet(frequency)
+                except TypeError:
+                    # python-broadlink documents find_rf_packet() without args.
+                    self._device.find_rf_packet()
+
+                if status_callback:
+                    status_callback("awaiting_second_press")
+                packet = self._wait_for_learned_packet(
+                    timeout_sec=timeout_sec,
+                    poll_interval=poll_interval,
+                    status_callback=status_callback,
+                )
                 LOGGER.debug("Broadlink learn_rf: packet received packet_len=%d", len(packet))
                 return packet
 
             # Some remote models learn RF through the same generic IR flow.
             LOGGER.debug("Broadlink learn_rf: falling back to enter_learning()")
             self._device.enter_learning()
-            packet = self._wait_for_learned_packet(timeout_sec=timeout_sec, poll_interval=poll_interval)
+            if status_callback:
+                status_callback("enter_learning")
+                status_callback("awaiting_button")
+            packet = self._wait_for_learned_packet(
+                timeout_sec=timeout_sec,
+                poll_interval=poll_interval,
+                status_callback=status_callback,
+            )
             LOGGER.debug("Broadlink learn_rf: fallback packet received packet_len=%d", len(packet))
             return packet
 
-    def _wait_for_learned_packet(self, timeout_sec: int = 30, poll_interval: float = 1.0) -> bytes:
+    def _wait_for_learned_packet(
+        self,
+        timeout_sec: int = 30,
+        poll_interval: float = 1.0,
+        status_callback: Callable[[str], None] | None = None,
+    ) -> bytes:
         """Poll the hub until a learned packet is available."""
         LOGGER.debug(
             "Broadlink wait_for_packet: start timeout_sec=%s poll_interval=%s",
@@ -207,6 +253,8 @@ class BroadlinkHubClient:
                 continue
             if packet:
                 LOGGER.debug("Broadlink wait_for_packet: packet available packet_len=%d", len(packet))
+                if status_callback:
+                    status_callback("packet_received")
                 return packet
 
         LOGGER.debug("Broadlink wait_for_packet: timeout after %.3fs", time.time() - start)

@@ -23,6 +23,7 @@
       <sts>
          <st id="ST" editor="txstatus" />
          <st id="GV0" editor="count" />
+         <st id="GV2" editor="learnstate" />
          <st id="GV30" editor="yesno" />
          <st id="TIME" editor="unixtime" />
       </sts>
@@ -40,6 +41,7 @@
       <sts>
          <st id="ST" editor="txstatus" />
          <st id="GV0" editor="count" />
+         <st id="GV2" editor="learnstate" />
          <st id="GV30" editor="yesno" />
          <st id="TIME" editor="unixtime" />
       </sts>

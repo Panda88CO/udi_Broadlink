@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 from typing import Dict, List
 
 import udi_interface
@@ -12,7 +14,15 @@ from config_parser import PluginConfig, build_config
 
 LOGGER = udi_interface.LOGGER
 Custom = udi_interface.Custom
-VERSION = "0.1.1"
+VERSION = "0.1.2"
+
+LEARN_STATE_IDLE = 0
+LEARN_STATE_WAIT_BUTTON = 1
+LEARN_STATE_RF_SWEEP = 2
+LEARN_STATE_RF_FREQ_FOUND = 3
+LEARN_STATE_WAIT_PACKET = 4
+LEARN_STATE_SUCCESS = 5
+LEARN_STATE_FAILED = 6
 
 
 class BaseNode(udi_interface.Node):
@@ -35,16 +45,16 @@ class BroadlinkCodeNode(BaseNode):
         {"driver": "TIME", "value": int(time.time()), "uom": 151},
     ]
 
-    def __init__(self, polyglot, primary, address: str, name: str, mode: str, code_name: str, controller):
+    def __init__(self, polyglot, primary, address: str, name: str, mode: str, code_value: str, controller):
         super().__init__(polyglot, primary, address, name)
         self.mode = mode
-        self.code_name = code_name
+        self.code_value = code_value
         self.controller = controller
         if self.mode == "rf":
             self.id = "blrfcode"
 
-    def set_code_name(self, code_name: str) -> None:
-        self.code_name = code_name
+    def set_code_value(self, code_value: str) -> None:
+        self.code_value = code_value
 
     def start(self):
         self._set("GV30", 1)
@@ -58,11 +68,11 @@ class BroadlinkCodeNode(BaseNode):
 
     def send_code(self, command=None):
         try:
-            self.controller.send_configured_code(self.mode, self.code_name)
+            self.controller.send_code_packet(self.mode, self.code_value)
             self._set("ST", 1)
             self._set("GV30", 1)
         except Exception as err:
-            LOGGER.error("Failed sending %s code '%s': %s", self.mode, self.code_name, err)
+            LOGGER.error("Failed sending %s code on node '%s': %s", self.mode, self.address, err)
             self._set("ST", 2)
             self._set("GV30", 0)
         self._set("TIME", int(time.time()), 151)
@@ -80,6 +90,7 @@ class BroadlinkRemoteNode(BaseNode):
     drivers = [
         {"driver": "ST", "value": 0, "uom": 25},
         {"driver": "GV0", "value": 0, "uom": 56},
+        {"driver": "GV2", "value": 0, "uom": 25},
         {"driver": "GV30", "value": 0, "uom": 25},
         {"driver": "TIME", "value": int(time.time()), "uom": 151},
     ]
@@ -92,6 +103,7 @@ class BroadlinkRemoteNode(BaseNode):
             self.id = "blrfremote"
 
     def start(self):
+        self._set("GV2", LEARN_STATE_IDLE)
         self.update_status()
 
     def stop(self):
@@ -106,16 +118,64 @@ class BroadlinkRemoteNode(BaseNode):
         self._set("TIME", int(time.time()), 151)
 
     def learn_code(self, command=None):
+        def progress(event: str) -> None:
+            self._set_learning_state(event)
+
         try:
-            name, _ = self.controller.learn_code(self.mode)
+            name, _ = self.controller.learn_code(self.mode, status_callback=progress)
             LOGGER.info("Learned %s code: %s", self.mode.upper(), name)
             self._set("ST", 1)
             self._set("GV30", 1)
+            self._set("GV2", LEARN_STATE_SUCCESS)
+            self.controller.poly.Notices[f"learn_{self.mode}_state"] = (
+                f"{self.mode.upper()} learned. New code node '{name}' is ready to send."
+            )
         except Exception as err:
             LOGGER.error("Failed to learn %s code: %s", self.mode, err)
             self._set("ST", 2)
             self._set("GV30", 0)
+            self._set("GV2", LEARN_STATE_FAILED)
+            self.controller.poly.Notices[f"learn_{self.mode}_state"] = f"{self.mode.upper()} learn failed: {err}"
         self.update_status()
+
+    def _set_learning_state(self, event: str) -> None:
+        notices = self.controller.poly.Notices
+
+        if event in {"enter_learning", "awaiting_button"}:
+            self._set("GV2", LEARN_STATE_WAIT_BUTTON)
+            notices[f"learn_{self.mode}_state"] = (
+                f"{self.mode.upper()} learning active. Point remote and press the target button."
+            )
+            return
+
+        if event == "sweep_started":
+            self._set("GV2", LEARN_STATE_RF_SWEEP)
+            notices[f"learn_{self.mode}_state"] = (
+                "RF sweep started. Long press the target button until frequency is found."
+            )
+            return
+
+        if event == "awaiting_first_press":
+            self._set("GV2", LEARN_STATE_RF_SWEEP)
+            notices[f"learn_{self.mode}_state"] = (
+                "RF frequency detect step. Long press the target remote button."
+            )
+            return
+
+        if event == "frequency_found":
+            self._set("GV2", LEARN_STATE_RF_FREQ_FOUND)
+            notices[f"learn_{self.mode}_state"] = "RF frequency found. Preparing packet learning step."
+            return
+
+        if event == "awaiting_second_press":
+            self._set("GV2", LEARN_STATE_WAIT_PACKET)
+            notices[f"learn_{self.mode}_state"] = "RF packet step. Short press the same button now."
+            return
+
+        if event == "packet_received":
+            self._set("GV2", LEARN_STATE_SUCCESS)
+            notices[f"learn_{self.mode}_state"] = "Packet captured. Creating code node."
+            return
 
     commands = {
         "UPDATE": update_status,
@@ -143,12 +203,16 @@ class BroadlinkController(BaseNode):
         self.heartbeat_state = 0
         self.learned_ir_codes: Dict[str, str] = {}
         self.learned_rf_codes: Dict[str, str] = {}
+        self.code_file = Path(__file__).resolve().parent / "learned_codes.json"
+        self.code_records: Dict[str, Dict[str, Dict[str, str]]] = {"ir": {}, "rf": {}}
 
         self.client: BroadlinkHubClient | None = None
         self.ir_parent: BroadlinkRemoteNode | None = None
         self.rf_parent: BroadlinkRemoteNode | None = None
         self.ir_nodes: Dict[str, BroadlinkCodeNode] = {}
         self.rf_nodes: Dict[str, BroadlinkCodeNode] = {}
+
+        self._load_code_records()
 
         self.poly.subscribe(self.poly.START, self.start, self.address)
         self.poly.subscribe(self.poly.STOP, self.stop)
@@ -163,6 +227,7 @@ class BroadlinkController(BaseNode):
         self.poly.addNode(self, conn_status="ST", rename=True)
 
     def start(self):
+        self._load_code_records()
         self._set("TIME", int(time.time()), 151)
         self.apply_config()
 
@@ -203,6 +268,9 @@ class BroadlinkController(BaseNode):
         self.learned_ir_codes = self._safe_code_map(self.data_store.get("learned_ir_codes", {}))
         self.learned_rf_codes = self._safe_code_map(self.data_store.get("learned_rf_codes", {}))
 
+        if not self.code_records["ir"] and not self.code_records["rf"]:
+            self._import_legacy_learned_codes()
+
         # If nodes are already initialized, refresh the dynamic node set.
         if self.ir_parent or self.rf_parent:
             self._reconcile_nodes()
@@ -210,6 +278,7 @@ class BroadlinkController(BaseNode):
 
     def poll(self, poll_type):
         self._set("TIME", int(time.time()), 151)
+        self._capture_node_renames()
 
         if poll_type == "shortPoll":
             self.heartbeat_state = 1 - self.heartbeat_state
@@ -231,36 +300,37 @@ class BroadlinkController(BaseNode):
         return bool(self.client and self.client.connected)
 
     def get_mode_codes(self, mode: str) -> Dict[str, str]:
-        if mode == "ir":
-            merged = dict(self.learned_ir_codes)
-            merged.update(self.config.ir_codes)
-            return merged
-        if mode == "rf":
-            merged = dict(self.learned_rf_codes)
-            merged.update(self.config.rf_codes)
-            return merged
-        return {}
+        return {addr: rec["code"] for addr, rec in self.code_records.get(mode, {}).items()}
 
-    def learn_code(self, mode: str):
+    def learn_code(self, mode: str, status_callback=None):
         if self.client is None:
             raise RuntimeError("Broadlink client is not initialized")
 
         if mode == "ir":
-            packet = self.client.learn_ir()
+            packet = self.client.learn_ir(status_callback=status_callback)
         elif mode == "rf":
-            packet = self.client.learn_rf()
+            packet = self.client.learn_rf(status_callback=status_callback)
         else:
             raise ValueError(f"Unsupported learn mode: {mode}")
 
-        code_name = self._next_learned_code_name(mode)
+        if not packet:
+            raise RuntimeError("Learning returned an empty packet")
+
         code_value = packet.hex()
+        code_name = self._next_learned_code_name(mode)
+        address = self._next_code_address(mode)
 
-        if mode == "ir":
-            self.learned_ir_codes[code_name] = code_value
-        else:
-            self.learned_rf_codes[code_name] = code_value
+        # Validate the packet by sending it once before we publish a new node.
+        self.client.send_code(code_value)
 
-        self._persist_learned_codes()
+        self.code_records[mode][address] = {
+            "name": code_name,
+            "code": code_value,
+            "source": "learned",
+            "source_key": code_name,
+        }
+
+        self._persist_code_records()
         self._reconcile_nodes()
         self._refresh_parents()
         self._set("ST", 1)
@@ -268,14 +338,13 @@ class BroadlinkController(BaseNode):
         self.poly.Notices[f"learn_{mode}"] = f"Learned {mode.upper()} code '{code_name}'"
         return code_name, code_value
 
-    def send_configured_code(self, mode: str, code_name: str) -> None:
-        code_map = self.get_mode_codes(mode)
-        if code_name not in code_map:
-            raise KeyError(f"Code '{code_name}' is not configured")
+    def send_code_packet(self, mode: str, code_value: str) -> None:
+        if not code_value:
+            raise ValueError(f"No {mode.upper()} code payload is configured for this node")
         if self.client is None:
             raise RuntimeError("Broadlink client is not initialized")
 
-        self.client.send_code(code_map[code_name])
+        self.client.send_code(code_value)
         self._set("GV1", 1)
         self._set("ST", 1)
 
@@ -329,38 +398,52 @@ class BroadlinkController(BaseNode):
             self.rf_parent.update_status()
 
     def _reconcile_nodes(self):
+        self._capture_node_renames()
+        self._sync_config_records()
         self._ensure_parent_nodes()
+        if not self.ir_parent or not self.rf_parent:
+            return
         self._reconcile_mode_nodes("ir", self.ir_nodes, self.ir_parent.address)
         self._reconcile_mode_nodes("rf", self.rf_nodes, self.rf_parent.address)
         self._remove_stale_nodes()
+        self._persist_code_records()
 
     def _ensure_parent_nodes(self):
+        existing_ir = self.poly.getNodes().get("blirhub")
+        if existing_ir and getattr(existing_ir, "primary", None) != "blirhub":
+            self.poly.delNode("blirhub")
+            self.ir_parent = None
+
+        existing_rf = self.poly.getNodes().get("blrfhub")
+        if existing_rf and getattr(existing_rf, "primary", None) != "blrfhub":
+            self.poly.delNode("blrfhub")
+            self.rf_parent = None
+
         if not self.ir_parent:
-            self.ir_parent = BroadlinkRemoteNode(self.poly, self.address, "blirhub", "Broadlink IR", "ir", self)
+            self.ir_parent = BroadlinkRemoteNode(self.poly, "blirhub", "blirhub", "Broadlink IR", "ir", self)
             self.poly.addNode(self.ir_parent, rename=True)
 
         if not self.rf_parent:
-            self.rf_parent = BroadlinkRemoteNode(self.poly, self.address, "blrfhub", "Broadlink RF", "rf", self)
+            self.rf_parent = BroadlinkRemoteNode(self.poly, "blrfhub", "blrfhub", "Broadlink RF", "rf", self)
             self.poly.addNode(self.rf_parent, rename=True)
 
     def _reconcile_mode_nodes(self, mode: str, node_map: Dict[str, BroadlinkCodeNode], primary: str):
-        codes = sorted(self.get_mode_codes(mode).keys())
-        expected_addresses = []
+        records = self.code_records.get(mode, {})
+        expected_addresses = sorted(records.keys())
 
-        for index, code_name in enumerate(codes, start=1):
-            prefix = "blir" if mode == "ir" else "blrf"
-            addr = self.poly.getValidAddress(f"{prefix}{index:02d}")
-            expected_addresses.append(addr)
-            display_name = self.poly.getValidName(f"{mode.upper()} {code_name}")
+        for addr in expected_addresses:
+            record = records[addr]
+            display_name = self.poly.getValidName(record.get("name", f"{mode.upper()} Code"))
+            code_value = record.get("code", "")
 
             if addr in node_map:
                 node = node_map[addr]
-                node.set_code_name(code_name)
+                node.set_code_value(code_value)
                 if node.name != display_name:
                     node.rename(display_name)
                 continue
 
-            node = BroadlinkCodeNode(self.poly, primary, addr, display_name, mode, code_name, self)
+            node = BroadlinkCodeNode(self.poly, primary, addr, display_name, mode, code_value, self)
             self.poly.addNode(node, rename=True)
             node_map[addr] = node
 
@@ -401,13 +484,146 @@ class BroadlinkController(BaseNode):
 
     def _next_learned_code_name(self, mode: str) -> str:
         prefix = "Learned IR" if mode == "ir" else "Learned RF"
-        existing = set(self.get_mode_codes(mode).keys())
+        existing = {record.get("name", "") for record in self.code_records.get(mode, {}).values()}
         index = 1
         while True:
             name = f"{prefix} {index:02d}"
             if name not in existing:
                 return name
             index += 1
+
+    def _next_code_address(self, mode: str) -> str:
+        used = set(self.code_records.get(mode, {}).keys())
+        prefix = "blir" if mode == "ir" else "blrf"
+        index = 1
+        while True:
+            addr = self.poly.getValidAddress(f"{prefix}{index:02d}")
+            if addr not in used and addr not in {"blirhub", "blrfhub"}:
+                return addr
+            index += 1
+
+    def _sync_config_records(self):
+        self._sync_config_records_for_mode("ir", self.config.ir_codes)
+        self._sync_config_records_for_mode("rf", self.config.rf_codes)
+
+    def _sync_config_records_for_mode(self, mode: str, config_codes: Dict[str, str]):
+        records = self.code_records[mode]
+        desired_keys = {name for name in config_codes.keys()}
+
+        for addr in list(records.keys()):
+            record = records[addr]
+            if record.get("source") == "config" and record.get("source_key") not in desired_keys:
+                del records[addr]
+
+        for code_name, code_value in config_codes.items():
+            existing_addr = None
+            for addr, record in records.items():
+                if record.get("source") == "config" and record.get("source_key") == code_name:
+                    existing_addr = addr
+                    break
+
+            if existing_addr:
+                records[existing_addr]["code"] = str(code_value).strip()
+                continue
+
+            addr = self._next_code_address(mode)
+            records[addr] = {
+                "name": f"{mode.upper()} {code_name}",
+                "code": str(code_value).strip(),
+                "source": "config",
+                "source_key": code_name,
+            }
+
+    def _capture_node_renames(self):
+        changed = False
+        for mode, node_map in (("ir", self.ir_nodes), ("rf", self.rf_nodes)):
+            records = self.code_records.get(mode, {})
+            for addr, node in node_map.items():
+                if addr not in records:
+                    continue
+                current_name = str(node.name).strip()
+                if current_name and records[addr].get("name") != current_name:
+                    records[addr]["name"] = current_name
+                    changed = True
+
+        if changed:
+            self._persist_code_records()
+
+    def _load_code_records(self):
+        if not self.code_file.exists():
+            return
+
+        try:
+            payload = json.loads(self.code_file.read_text(encoding="utf-8"))
+        except Exception as err:
+            LOGGER.error("Failed reading learned code store '%s': %s", self.code_file, err)
+            return
+
+        parsed = {"ir": {}, "rf": {}}
+        for mode in ("ir", "rf"):
+            records = payload.get(mode, []) if isinstance(payload, dict) else []
+            if not isinstance(records, list):
+                continue
+            for item in records:
+                if not isinstance(item, dict):
+                    continue
+                addr = str(item.get("address", "")).strip().lower()
+                name = str(item.get("name", "")).strip()
+                code = str(item.get("code", "")).strip()
+                if not addr or not name or not code:
+                    continue
+                parsed[mode][addr] = {
+                    "name": name,
+                    "code": code,
+                    "source": str(item.get("source", "learned")).strip() or "learned",
+                    "source_key": str(item.get("source_key", name)).strip() or name,
+                }
+
+        self.code_records = parsed
+
+    def _persist_code_records(self):
+        payload = {"ir": [], "rf": []}
+        for mode in ("ir", "rf"):
+            for addr in sorted(self.code_records.get(mode, {}).keys()):
+                record = self.code_records[mode][addr]
+                payload[mode].append(
+                    {
+                        "address": addr,
+                        "name": record.get("name", ""),
+                        "code": record.get("code", ""),
+                        "source": record.get("source", "learned"),
+                        "source_key": record.get("source_key", record.get("name", "")),
+                    }
+                )
+
+        try:
+            self.code_file.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        except Exception as err:
+            LOGGER.error("Failed writing learned code store '%s': %s", self.code_file, err)
+
+    def _import_legacy_learned_codes(self):
+        if self.learned_ir_codes:
+            for name, code in self.learned_ir_codes.items():
+                addr = self._next_code_address("ir")
+                self.code_records["ir"][addr] = {
+                    "name": name,
+                    "code": code,
+                    "source": "learned",
+                    "source_key": name,
+                }
+
+        if self.learned_rf_codes:
+            for name, code in self.learned_rf_codes.items():
+                addr = self._next_code_address("rf")
+                self.code_records["rf"][addr] = {
+                    "name": name,
+                    "code": code,
+                    "source": "learned",
+                    "source_key": name,
+                }
+
+        if self.learned_ir_codes or self.learned_rf_codes:
+            self._persist_code_records()
 
     def force_update(self, command=None):
         self.apply_config()
