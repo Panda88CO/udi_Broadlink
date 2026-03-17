@@ -455,6 +455,7 @@ class BroadlinkController(BaseNode):
     def _reconcile_mode_nodes(self, mode: str, node_map: Dict[str, BroadlinkCodeNode], primary: str):
         records = self.code_records.get(mode, {})
         expected_addresses = sorted(records.keys())
+        existing_nodes = self.poly.getNodes()
 
         for addr in expected_addresses:
             record = records[addr]
@@ -467,6 +468,9 @@ class BroadlinkController(BaseNode):
                 if node.name != display_name:
                     node.rename(display_name)
                 continue
+
+            if addr in existing_nodes:
+                self.poly.delNode(addr)
 
             node = BroadlinkCodeNode(self.poly, primary, addr, display_name, mode, code_value, self)
             self.poly.addNode(node, rename=True)
@@ -522,10 +526,28 @@ class BroadlinkController(BaseNode):
         prefix = "blir" if mode == "ir" else "blrf"
         index = 1
         while True:
-            addr = self.poly.getValidAddress(f"{prefix}{index:02d}")
+            addr = f"{prefix}{index:02d}"
             if addr not in used and addr not in {"blirhub", "blrfhub"}:
                 return addr
             index += 1
+
+    def _find_existing_code_node_address(self, mode: str, code_name: str) -> str | None:
+        prefix = "blir" if mode == "ir" else "blrf"
+        used = set(self.code_records.get(mode, {}).keys())
+        existing_nodes = self.poly.getNodes()
+
+        for addr, node in existing_nodes.items():
+            if addr in used or not addr.startswith(prefix) or addr in {"blirhub", "blrfhub"}:
+                continue
+            if str(getattr(node, "name", "")).strip() == str(code_name).strip():
+                return addr
+
+        for addr in sorted(existing_nodes.keys()):
+            if addr in used or not addr.startswith(prefix) or addr in {"blirhub", "blrfhub"}:
+                continue
+            return addr
+
+        return None
 
     def _sync_config_records(self):
         self._sync_config_records_for_mode("ir", self.config.ir_codes)
@@ -678,7 +700,7 @@ class BroadlinkController(BaseNode):
     def _import_legacy_learned_codes(self):
         if self.learned_ir_codes:
             for name, code in self.learned_ir_codes.items():
-                addr = self._next_code_address("ir")
+                addr = self._find_existing_code_node_address("ir", name) or self._next_code_address("ir")
                 self.code_records["ir"][addr] = {
                     "name": name,
                     "code": code,
@@ -688,7 +710,7 @@ class BroadlinkController(BaseNode):
 
         if self.learned_rf_codes:
             for name, code in self.learned_rf_codes.items():
-                addr = self._next_code_address("rf")
+                addr = self._find_existing_code_node_address("rf", name) or self._next_code_address("rf")
                 self.code_records["rf"][addr] = {
                     "name": name,
                     "code": code,
