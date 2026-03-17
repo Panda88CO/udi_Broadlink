@@ -13,6 +13,7 @@
          </sends>
          <accepts>
             <cmd id="UPDATE" />
+            <cmd id="UPDATECODES" />
             <cmd id="APSETUP" />
          </accepts>
       </cmds>

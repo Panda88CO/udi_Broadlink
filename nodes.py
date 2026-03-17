@@ -14,7 +14,7 @@ from config_parser import PluginConfig, build_config
 
 LOGGER = udi_interface.LOGGER
 Custom = udi_interface.Custom
-VERSION = "0.1.2"
+VERSION = "0.1.4"
 
 LEARN_STATE_IDLE = 0
 LEARN_STATE_WAIT_BUTTON = 1
@@ -232,6 +232,10 @@ class BroadlinkController(BaseNode):
         self.apply_config()
 
     def stop(self):
+        try:
+            self.update_codes(notify=False)
+        except Exception as err:
+            LOGGER.error("Failed to persist codes during stop: %s", err)
         self._set("ST", 0)
         self._set("GV1", 0)
 
@@ -300,7 +304,13 @@ class BroadlinkController(BaseNode):
         return bool(self.client and self.client.connected)
 
     def get_mode_codes(self, mode: str) -> Dict[str, str]:
-        return {addr: rec["code"] for addr, rec in self.code_records.get(mode, {}).items()}
+        codes: Dict[str, str] = {}
+        for addr, rec in self.code_records.get(mode, {}).items():
+            code_value = str(rec.get("code", "")).strip()
+            if not code_value:
+                continue
+            codes[addr] = code_value
+        return codes
 
     def learn_code(self, mode: str, status_callback=None):
         if self.client is None:
@@ -372,8 +382,7 @@ class BroadlinkController(BaseNode):
             self._set("GV1", 0)
             self.poly.Notices["connect"] = f"Could not connect/auth with Broadlink hub: {err}"
 
-        self._reconcile_nodes()
-        self._refresh_parents()
+        self.update_codes(notify=False)
 
     def ap_setup(self, command=None):
         """Provision Broadlink device while it is in AP mode."""
@@ -524,7 +533,8 @@ class BroadlinkController(BaseNode):
 
     def _sync_config_records_for_mode(self, mode: str, config_codes: Dict[str, str]):
         records = self.code_records[mode]
-        desired_keys = {name for name in config_codes.keys()}
+        desired_keys = {name for name, value in config_codes.items() if str(value).strip()}
+        default_name_by_key = {name: self.poly.getValidName(f"{mode.upper()} {name}") for name in config_codes.keys()}
 
         for addr in list(records.keys()):
             record = records[addr]
@@ -532,6 +542,10 @@ class BroadlinkController(BaseNode):
                 del records[addr]
 
         for code_name, code_value in config_codes.items():
+            normalized_code = str(code_value).strip()
+            if not normalized_code:
+                continue
+
             existing_addr = None
             for addr, record in records.items():
                 if record.get("source") == "config" and record.get("source_key") == code_name:
@@ -539,16 +553,60 @@ class BroadlinkController(BaseNode):
                     break
 
             if existing_addr:
-                records[existing_addr]["code"] = str(code_value).strip()
+                records[existing_addr]["code"] = normalized_code
+                continue
+
+            # If the config key changed but payload stayed the same, treat it as a rename.
+            rename_addr = None
+            for addr, record in records.items():
+                if record.get("source") != "config":
+                    continue
+                if record.get("source_key") in desired_keys:
+                    continue
+                if str(record.get("code", "")).strip() != normalized_code:
+                    continue
+                rename_addr = addr
+                break
+
+            if rename_addr:
+                record = records[rename_addr]
+                old_key = str(record.get("source_key", "")).strip()
+                old_default_name = self.poly.getValidName(f"{mode.upper()} {old_key}") if old_key else ""
+                record["source_key"] = code_name
+                record["code"] = normalized_code
+                if record.get("name") == old_default_name or not str(record.get("name", "")).strip():
+                    record["name"] = default_name_by_key[code_name]
                 continue
 
             addr = self._next_code_address(mode)
             records[addr] = {
-                "name": f"{mode.upper()} {code_name}",
-                "code": str(code_value).strip(),
+                "name": default_name_by_key[code_name],
+                "code": normalized_code,
                 "source": "config",
                 "source_key": code_name,
             }
+
+    def update_codes(self, command=None, notify: bool = True):
+        self._capture_node_renames()
+        self._sync_config_records()
+
+        # Remove invalid/empty records to keep the persisted JSON clean.
+        for mode in ("ir", "rf"):
+            for addr in list(self.code_records.get(mode, {}).keys()):
+                record = self.code_records[mode][addr]
+                if not str(record.get("code", "")).strip():
+                    del self.code_records[mode][addr]
+                    continue
+                if not str(record.get("name", "")).strip():
+                    fallback = "IR Code" if mode == "ir" else "RF Code"
+                    self.code_records[mode][addr]["name"] = self.poly.getValidName(fallback)
+
+        self._persist_code_records()
+        self._reconcile_nodes()
+        self._refresh_parents()
+        if notify:
+            self.poly.Notices["codes"] = "Code records updated and saved to learned_codes.json"
+            LOGGER.info("Code records reconciled and persisted")
 
     def _capture_node_renames(self):
         changed = False
@@ -646,5 +704,6 @@ class BroadlinkController(BaseNode):
 
     commands = {
         "UPDATE": force_update,
+        "UPDATECODES": update_codes,
         "APSETUP": ap_setup,
     }
