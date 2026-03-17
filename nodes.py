@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Dict, List
@@ -32,6 +33,23 @@ def _code_preview(code_value: str, max_chars: int = 80) -> str:
     if len(code_value) <= max_chars:
         return code_value
     return f"{code_value[:max_chars]}..."
+
+
+def _canonical_address(address: str) -> str:
+    """Normalize addresses so plugin logic can compare PG3 and local forms."""
+    text = str(address or "").strip().lower()
+    if not text:
+        return ""
+    match = re.match(r"^n\d+_(.+)$", text)
+    if match:
+        return match.group(1)
+    return text
+
+
+def _address_matches_mode(address: str, mode: str) -> bool:
+    canon = _canonical_address(address)
+    prefixes = ("blir", "bir") if mode == "ir" else ("blrf", "brf")
+    return canon.startswith(prefixes)
 
 
 class BaseNode(udi_interface.Node):
@@ -441,13 +459,25 @@ class BroadlinkController(BaseNode):
         self._persist_code_records()
 
     def _ensure_parent_nodes(self):
-        existing_ir = self.poly.getNodes().get("blirhub")
+        existing_nodes = self.poly.getNodes()
+
+        existing_ir = existing_nodes.get("blirhub")
+        if existing_ir is None:
+            for raw_addr, node in existing_nodes.items():
+                if _canonical_address(raw_addr) == "blirhub":
+                    existing_ir = node
+                    break
         if existing_ir and getattr(existing_ir, "primary", None) != "blirhub":
             self._delete_mode_nodes("ir")
             self.poly.delNode("blirhub")
             self.ir_parent = None
 
-        existing_rf = self.poly.getNodes().get("blrfhub")
+        existing_rf = existing_nodes.get("blrfhub")
+        if existing_rf is None:
+            for raw_addr, node in existing_nodes.items():
+                if _canonical_address(raw_addr) == "blrfhub":
+                    existing_rf = node
+                    break
         if existing_rf and getattr(existing_rf, "primary", None) != "blrfhub":
             self._delete_mode_nodes("rf")
             self.poly.delNode("blrfhub")
@@ -467,23 +497,33 @@ class BroadlinkController(BaseNode):
             self.poly.delNode(addr)
             del node_map[addr]
 
-        prefix = "blir" if mode == "ir" else "blrf"
         parent_addr = "blirhub" if mode == "ir" else "blrfhub"
         for node_addr in list(self.poly.getNodes().keys()):
-            if node_addr == parent_addr:
+            canon_addr = _canonical_address(node_addr)
+            if canon_addr == parent_addr:
                 continue
-            if node_addr.startswith(prefix):
+            if _address_matches_mode(canon_addr, mode):
                 self.poly.delNode(node_addr)
 
     def _reconcile_mode_nodes(self, mode: str, node_map: Dict[str, BroadlinkCodeNode], primary: str):
-        records = self.code_records.get(mode, {})
+        records = {
+            _canonical_address(addr): value for addr, value in self.code_records.get(mode, {}).items() if _canonical_address(addr)
+        }
+        self.code_records[mode] = records
         expected_addresses = sorted(records.keys())
         existing_nodes = self.poly.getNodes()
+        canonical_to_raw = {_canonical_address(raw_addr): raw_addr for raw_addr in existing_nodes.keys()}
         LOGGER.debug(
             "Reconcile %s nodes: expected_addresses=%s current_registered=%s",
             mode,
             expected_addresses,
-            sorted([addr for addr in existing_nodes.keys() if addr.startswith("blir") or addr.startswith("blrf")]),
+            sorted(
+                [
+                    _canonical_address(addr)
+                    for addr in existing_nodes.keys()
+                    if _address_matches_mode(addr, "ir") or _address_matches_mode(addr, "rf")
+                ]
+            ),
         )
 
         for addr in expected_addresses:
@@ -498,8 +538,9 @@ class BroadlinkController(BaseNode):
                     node.rename(display_name)
                 continue
 
-            if addr in existing_nodes:
-                self.poly.delNode(addr)
+            stale_raw_addr = canonical_to_raw.get(addr)
+            if stale_raw_addr:
+                self.poly.delNode(stale_raw_addr)
 
             node = BroadlinkCodeNode(self.poly, primary, addr, display_name, mode, code_value, self)
             self.poly.addNode(node, rename=True)
@@ -513,16 +554,17 @@ class BroadlinkController(BaseNode):
 
     def _remove_stale_nodes(self):
         expected = {
-            self.address,
+            _canonical_address(self.address),
             "blirhub",
             "blrfhub",
             *self.ir_nodes.keys(),
             *self.rf_nodes.keys(),
         }
         for node_addr in list(self.poly.getNodes().keys()):
-            if node_addr in expected:
+            canon_addr = _canonical_address(node_addr)
+            if canon_addr in expected:
                 continue
-            if node_addr.startswith("blir") or node_addr.startswith("blrf"):
+            if _address_matches_mode(canon_addr, "ir") or _address_matches_mode(canon_addr, "rf"):
                 self.poly.delNode(node_addr)
 
     def _safe_code_map(self, candidate) -> Dict[str, str]:
@@ -562,18 +604,19 @@ class BroadlinkController(BaseNode):
             index += 1
 
     def _find_existing_code_node_address(self, mode: str, code_name: str) -> str | None:
-        prefix = "blir" if mode == "ir" else "blrf"
         used = set(self.code_records.get(mode, {}).keys())
         existing_nodes = self.poly.getNodes()
 
-        for addr, node in existing_nodes.items():
-            if addr in used or not addr.startswith(prefix) or addr in {"blirhub", "blrfhub"}:
+        for raw_addr, node in existing_nodes.items():
+            addr = _canonical_address(raw_addr)
+            if addr in used or not _address_matches_mode(addr, mode) or addr in {"blirhub", "blrfhub"}:
                 continue
             if str(getattr(node, "name", "")).strip() == str(code_name).strip():
                 return addr
 
-        for addr in sorted(existing_nodes.keys()):
-            if addr in used or not addr.startswith(prefix) or addr in {"blirhub", "blrfhub"}:
+        for raw_addr in sorted(existing_nodes.keys()):
+            addr = _canonical_address(raw_addr)
+            if addr in used or not _address_matches_mode(addr, mode) or addr in {"blirhub", "blrfhub"}:
                 continue
             return addr
 
@@ -693,7 +736,7 @@ class BroadlinkController(BaseNode):
             for item in records:
                 if not isinstance(item, dict):
                     continue
-                addr = str(item.get("address", "")).strip().lower()
+                addr = _canonical_address(str(item.get("address", "")).strip().lower())
                 name = str(item.get("name", "")).strip()
                 code = str(item.get("code", "")).strip()
                 if not addr or not name or not code:
