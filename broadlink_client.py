@@ -18,6 +18,21 @@ import udi_interface
 LOGGER = udi_interface.LOGGER
 
 
+def _str_preview(value: str, max_chars: int = 80) -> str:
+    if not value:
+        return ""
+    if len(value) <= max_chars:
+        return value
+    return f"{value[:max_chars]}..."
+
+
+def _bytes_hex_preview(value: bytes, max_bytes: int = 16) -> str:
+    if not value:
+        return ""
+    snippet = value[:max_bytes]
+    return snippet.hex()
+
+
 class BroadlinkHubClient:
     """Thin wrapper around python-broadlink remote functionality."""
 
@@ -107,8 +122,17 @@ class BroadlinkHubClient:
 
     def send_code(self, encoded_code: str) -> bool:
         """Transmit an IR or RF packet to the Broadlink hub."""
+        LOGGER.debug(
+            "Broadlink send_code: encoded_len=%d encoded_preview=%s",
+            len(encoded_code or ""),
+            _str_preview(encoded_code),
+        )
         packet = decode_code_string(encoded_code)
-        LOGGER.debug("Broadlink send_code: decoded packet_len=%d", len(packet))
+        LOGGER.debug(
+            "Broadlink send_code: decoded packet_len=%d packet_hex_preview=%s",
+            len(packet),
+            _bytes_hex_preview(packet),
+        )
 
         with self._lock:
             if self._device is None:

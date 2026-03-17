@@ -25,6 +25,15 @@ LEARN_STATE_SUCCESS = 5
 LEARN_STATE_FAILED = 6
 
 
+def _code_preview(code_value: str, max_chars: int = 80) -> str:
+    """Return a short, log-safe preview of an encoded code string."""
+    if not code_value:
+        return ""
+    if len(code_value) <= max_chars:
+        return code_value
+    return f"{code_value[:max_chars]}..."
+
+
 class BaseNode(udi_interface.Node):
     """Common helpers shared by all nodes."""
 
@@ -68,9 +77,17 @@ class BroadlinkCodeNode(BaseNode):
 
     def send_code(self, command=None):
         try:
+            LOGGER.info(
+                "TXCODE requested node=%s mode=%s code_len=%d code_preview=%s",
+                self.address,
+                self.mode,
+                len(self.code_value or ""),
+                _code_preview(self.code_value),
+            )
             self.controller.send_code_packet(self.mode, self.code_value)
             self._set("ST", 1)
             self._set("GV30", 1)
+            LOGGER.info("TXCODE completed node=%s mode=%s", self.address, self.mode)
         except Exception as err:
             LOGGER.error("Failed sending %s code on node '%s': %s", self.mode, self.address, err)
             self._set("ST", 2)
@@ -354,6 +371,12 @@ class BroadlinkController(BaseNode):
         if self.client is None:
             raise RuntimeError("Broadlink client is not initialized")
 
+        LOGGER.debug(
+            "send_code_packet mode=%s code_len=%d code_preview=%s",
+            mode,
+            len(code_value),
+            _code_preview(code_value),
+        )
         self.client.send_code(code_value)
         self._set("GV1", 1)
         self._set("ST", 1)
@@ -456,6 +479,12 @@ class BroadlinkController(BaseNode):
         records = self.code_records.get(mode, {})
         expected_addresses = sorted(records.keys())
         existing_nodes = self.poly.getNodes()
+        LOGGER.debug(
+            "Reconcile %s nodes: expected_addresses=%s current_registered=%s",
+            mode,
+            expected_addresses,
+            sorted([addr for addr in existing_nodes.keys() if addr.startswith("blir") or addr.startswith("blrf")]),
+        )
 
         for addr in expected_addresses:
             record = records[addr]
@@ -475,6 +504,7 @@ class BroadlinkController(BaseNode):
             node = BroadlinkCodeNode(self.poly, primary, addr, display_name, mode, code_value, self)
             self.poly.addNode(node, rename=True)
             node_map[addr] = node
+            LOGGER.info("Registered %s code node address=%s name=%s", mode.upper(), addr, display_name)
 
         for addr in list(node_map.keys()):
             if addr not in expected_addresses:
