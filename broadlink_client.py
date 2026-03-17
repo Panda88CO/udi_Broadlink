@@ -37,16 +37,15 @@ class BroadlinkHubClient:
             if not self.hub_ip:
                 raise ValueError("HUB_IP is required")
 
-            # Match python-broadlink usage: discover the device, then authenticate it.
-            LOGGER.debug("Broadlink connect: discover() start hub_ip=%s", self.hub_ip)
+            # hello() fetches devtype/mac, then auth() prepares encrypted session.
+            LOGGER.debug("Broadlink connect: hello() start hub_ip=%s", self.hub_ip)
             start = time.time()
-            devices = broadlink.discover(discover_ip_address=self.hub_ip)
-            LOGGER.debug("Broadlink connect: discover() found {} devices: {}".format(len(devices), devices))
-            device = devices[0] if devices else None
+            device = broadlink.hello(self.hub_ip)
+            LOGGER
             if device is None:
-                LOGGER.debug("Broadlink connect: discover() returned no device hub_ip=%s", self.hub_ip)
+                LOGGER.debug("Broadlink connect: hello() returned no device hub_ip=%s", self.hub_ip)
                 raise RuntimeError(f"No Broadlink device found at {self.hub_ip}")
-            LOGGER.debug("Broadlink connect: discover() completed in %.3fs", time.time() - start)
+            LOGGER.debug("Broadlink connect: hello() completed in %.3fs", time.time() - start)
 
             # Some hubs are temporarily busy; a short retry often succeeds.
             last_err = None
@@ -65,11 +64,10 @@ class BroadlinkHubClient:
                     last_err = err
                     LOGGER.debug("Broadlink connect: auth() failed attempt=%d err=%s", attempt, err)
                     if attempt < 2:
-                        # Re-run discovery before retrying auth to refresh device state.
+                        # Re-run hello before retrying auth to refresh the session bootstrap.
                         time.sleep(0.3)
-                        LOGGER.debug("Broadlink connect: retry discover() before auth attempt=%d", attempt + 1)
-                        devices = broadlink.discover(discover_ip_address=self.hub_ip)
-                        device = devices[0] if devices else None
+                        LOGGER.debug("Broadlink connect: retry hello() before auth attempt=%d", attempt + 1)
+                        device = broadlink.hello(self.hub_ip)
                         if device is None:
                             raise RuntimeError(f"No Broadlink device found at {self.hub_ip}")
                     else:
