@@ -448,15 +448,98 @@ class BroadlinkController(BaseNode):
             self.rf_parent.update_status()
 
     def _reconcile_nodes(self):
+        self._log_node_routing_state("before_reconcile")
         self._capture_node_renames()
         self._sync_config_records()
         self._ensure_parent_nodes()
         if not self.ir_parent or not self.rf_parent:
+            LOGGER.debug(
+                "Reconcile aborted: ir_parent=%s rf_parent=%s",
+                bool(self.ir_parent),
+                bool(self.rf_parent),
+            )
             return
         self._reconcile_mode_nodes("ir", self.ir_nodes, self.ir_parent.address)
         self._reconcile_mode_nodes("rf", self.rf_nodes, self.rf_parent.address)
         self._remove_stale_nodes()
         self._persist_code_records()
+        self._log_node_routing_state("after_reconcile")
+
+    def _log_node_routing_state(self, stage: str):
+        nodes = self.poly.getNodes()
+        runtime_rf = sorted([_canonical_address(addr) for addr in nodes.keys() if _address_matches_mode(addr, "rf")])
+        runtime_ir = sorted([_canonical_address(addr) for addr in nodes.keys() if _address_matches_mode(addr, "ir")])
+        LOGGER.debug(
+            "Routing state %s: records_rf=%s records_ir=%s map_rf=%s map_ir=%s runtime_rf=%s runtime_ir=%s",
+            stage,
+            sorted(self.code_records.get("rf", {}).keys()),
+            sorted(self.code_records.get("ir", {}).keys()),
+            sorted(self.rf_nodes.keys()),
+            sorted(self.ir_nodes.keys()),
+            runtime_rf,
+            runtime_ir,
+        )
+
+    def _seed_records_from_pg3_nodes(self):
+        """Adopt existing PG3 nodes so commands can route before codes are configured."""
+        getter = getattr(self.poly, "getNodesFromDb", None)
+        if not callable(getter):
+            LOGGER.debug("PG3 DB snapshot unavailable: getNodesFromDb() not supported by this interface version")
+            return
+
+        try:
+            pg3_nodes = getter()
+        except Exception as err:
+            LOGGER.debug("Unable to read PG3 node database snapshot: %s", err)
+            return
+
+        if not isinstance(pg3_nodes, list):
+            LOGGER.debug("PG3 DB snapshot returned unexpected type: %s", type(pg3_nodes).__name__)
+            return
+
+        seeded = 0
+        db_rf = []
+        db_ir = []
+        for node in pg3_nodes:
+            if not isinstance(node, dict):
+                continue
+
+            addr = _canonical_address(node.get("address", ""))
+            if not addr or addr in {"setup", "blirhub", "blrfhub"}:
+                continue
+
+            mode = None
+            if _address_matches_mode(addr, "ir"):
+                mode = "ir"
+                db_ir.append(addr)
+            elif _address_matches_mode(addr, "rf"):
+                mode = "rf"
+                db_rf.append(addr)
+            if mode is None:
+                continue
+
+            records = self.code_records.get(mode, {})
+            if addr in records:
+                continue
+
+            fallback_name = f"{mode.upper()} {addr}"
+            display_name = self.poly.getValidName(str(node.get("name", "")).strip() or fallback_name)
+            records[addr] = {
+                "name": display_name,
+                "code": "",
+                "source": "pg3",
+                "source_key": addr,
+            }
+            seeded += 1
+
+        if seeded:
+            LOGGER.info("Seeded %d code node record(s) from PG3 DB snapshot", seeded)
+        LOGGER.debug(
+            "PG3 DB snapshot nodes: rf=%s ir=%s seeded=%d",
+            sorted(set(db_rf)),
+            sorted(set(db_ir)),
+            seeded,
+        )
 
     def _ensure_parent_nodes(self):
         existing_nodes = self.poly.getNodes()
