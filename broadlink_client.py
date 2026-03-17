@@ -41,6 +41,7 @@ class BroadlinkHubClient:
             LOGGER.debug("Broadlink connect: discover() start hub_ip=%s", self.hub_ip)
             start = time.time()
             devices = broadlink.discover(discover_ip_address=self.hub_ip)
+            LOGGER.debug("Broadlink connect: discover() found {} devices: {}".format(len(devices), devices))
             device = devices[0] if devices else None
             if device is None:
                 LOGGER.debug("Broadlink connect: discover() returned no device hub_ip=%s", self.hub_ip)
