@@ -41,7 +41,7 @@ class BroadlinkHubClient:
             LOGGER.debug("Broadlink connect: hello() start hub_ip=%s", self.hub_ip)
             start = time.time()
             device = broadlink.hello(self.hub_ip)
-            LOGGER
+            LOGGER.debug("Broadlink connect: hello() returned device={}".format(device))
             if device is None:
                 LOGGER.debug("Broadlink connect: hello() returned no device hub_ip=%s", self.hub_ip)
                 raise RuntimeError(f"No Broadlink device found at {self.hub_ip}")
