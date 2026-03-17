@@ -12,7 +12,7 @@ from config_parser import PluginConfig, build_config
 
 LOGGER = udi_interface.LOGGER
 Custom = udi_interface.Custom
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 
 class BaseNode(udi_interface.Node):

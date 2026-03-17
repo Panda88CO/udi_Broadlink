@@ -66,7 +66,7 @@ Code value encoding:
 
 - On startup and parameter updates (`handleParams`), the node server:
   - Parses config
-  - Connects/authenticates to Broadlink hub using `hello()` + `auth()` for normal runtime control
+  - Connects/authenticates to Broadlink hub using `discover()` + `auth()` for normal runtime control
   - Scans custom parameters for `IR_*` and `RF_*` code entries
   - Builds/rebuilds IR and RF code subnodes from those entries
 - AP provisioning is a separate explicit action (`APSETUP`) that calls `broadlink.setup()`.
