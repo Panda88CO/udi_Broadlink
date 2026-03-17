@@ -411,11 +411,13 @@ class BroadlinkController(BaseNode):
     def _ensure_parent_nodes(self):
         existing_ir = self.poly.getNodes().get("blirhub")
         if existing_ir and getattr(existing_ir, "primary", None) != "blirhub":
+            self._delete_mode_nodes("ir")
             self.poly.delNode("blirhub")
             self.ir_parent = None
 
         existing_rf = self.poly.getNodes().get("blrfhub")
         if existing_rf and getattr(existing_rf, "primary", None) != "blrfhub":
+            self._delete_mode_nodes("rf")
             self.poly.delNode("blrfhub")
             self.rf_parent = None
 
@@ -426,6 +428,20 @@ class BroadlinkController(BaseNode):
         if not self.rf_parent:
             self.rf_parent = BroadlinkRemoteNode(self.poly, "blrfhub", "blrfhub", "Broadlink RF", "rf", self)
             self.poly.addNode(self.rf_parent, rename=True)
+
+    def _delete_mode_nodes(self, mode: str):
+        node_map = self.ir_nodes if mode == "ir" else self.rf_nodes
+        for addr in list(node_map.keys()):
+            self.poly.delNode(addr)
+            del node_map[addr]
+
+        prefix = "blir" if mode == "ir" else "blrf"
+        parent_addr = "blirhub" if mode == "ir" else "blrfhub"
+        for node_addr in list(self.poly.getNodes().keys()):
+            if node_addr == parent_addr:
+                continue
+            if node_addr.startswith(prefix):
+                self.poly.delNode(node_addr)
 
     def _reconcile_mode_nodes(self, mode: str, node_map: Dict[str, BroadlinkCodeNode], primary: str):
         records = self.code_records.get(mode, {})
