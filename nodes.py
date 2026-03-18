@@ -238,8 +238,8 @@ class BroadlinkController(BaseNode):
         self.heartbeat_state = 0
         self.learned_ir_codes: Dict[str, str] = {}
         self.learned_rf_codes: Dict[str, str] = {}
-        self.code_file = Path(__file__).resolve().parent / "learned_codes.json"
         self.code_records: Dict[str, Dict[str, Dict[str, str]]] = {"ir": {}, "rf": {}}
+        self.code_records_key = "code_records"
 
         self.client: BroadlinkHubClient | None = None
         self.ir_parent: BroadlinkRemoteNode | None = None
@@ -338,8 +338,8 @@ class BroadlinkController(BaseNode):
         self.learned_ir_codes = self._safe_code_map(self.data_store.get("learned_ir_codes", {}))
         self.learned_rf_codes = self._safe_code_map(self.data_store.get("learned_rf_codes", {}))
 
-        if not self.code_records["ir"] and not self.code_records["rf"]:
-            self._import_legacy_learned_codes()
+        # Load code records from customdata
+        self._load_code_records_from_custom_data()
 
         # If nodes are already initialized, refresh the dynamic node set.
         if self.ir_parent or self.rf_parent:
@@ -890,7 +890,7 @@ class BroadlinkController(BaseNode):
         self._reconcile_nodes()
         self._refresh_parents()
         if notify:
-            self.poly.Notices["codes"] = "Code records updated and saved to learned_codes.json"
+            self.poly.Notices["codes"] = "Code records updated and saved"
             LOGGER.info("Code records reconciled and persisted")
 
     def _capture_node_renames(self):
@@ -909,58 +909,84 @@ class BroadlinkController(BaseNode):
             self._persist_code_records()
 
     def _load_code_records(self):
-        if not self.code_file.exists():
-            return
+        """Load code records from customdata. Called at start() if needed."""
+        self._load_code_records_from_custom_data()
 
-        try:
-            payload = json.loads(self.code_file.read_text(encoding="utf-8"))
-        except Exception as err:
-            LOGGER.error("Failed reading learned code store '%s': %s", self.code_file, err)
-            return
+    def _load_code_records_from_custom_data(self):
+        """Load code records from customdata storage."""
+        payload = self.data_store.get(self.code_records_key, {})
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception as err:
+                LOGGER.error("Failed parsing customdata code_records payload: %s", err)
+                payload = {}
 
+        self.code_records = self._parse_code_records_payload(payload)
+
+    def _parse_code_records_payload(self, payload):
+        """Parse code records from a dict payload."""
         parsed = {"ir": {}, "rf": {}}
-        for mode in ("ir", "rf"):
-            records = payload.get(mode, []) if isinstance(payload, dict) else []
-            if not isinstance(records, list):
-                continue
-            for item in records:
-                if not isinstance(item, dict):
-                    continue
-                addr = _canonical_address(str(item.get("address", "")).strip().lower())
-                name = str(item.get("name", "")).strip()
-                code = str(item.get("code", "")).strip()
-                if not addr or not name or not code:
-                    continue
-                parsed[mode][addr] = {
-                    "name": name,
-                    "code": code,
-                    "source": str(item.get("source", "learned")).strip() or "learned",
-                    "source_key": str(item.get("source_key", name)).strip() or name,
-                }
+        if not isinstance(payload, dict):
+            return parsed
 
-        self.code_records = parsed
+        for mode in ("ir", "rf"):
+            records = payload.get(mode, []) if isinstance(payload.get(mode), list) else {}
+            if isinstance(records, list):
+                # Old list format: convert to dict
+                for item in records:
+                    if not isinstance(item, dict):
+                        continue
+                    addr = _canonical_address(str(item.get("address", "")).strip().lower())
+                    name = str(item.get("name", "")).strip()
+                    code = str(item.get("code", "")).strip()
+                    if not addr or not name or not code:
+                        continue
+                    parsed[mode][addr] = {
+                        "name": name,
+                        "code": code,
+                        "source": str(item.get("source", "learned")).strip() or "learned",
+                        "source_key": str(item.get("source_key", name)).strip() or name,
+                    }
+            elif isinstance(records, dict):
+                # Dict format
+                for addr, record in records.items():
+                    if not isinstance(record, dict):
+                        continue
+                    addr = _canonical_address(str(addr).strip().lower())
+                    name = str(record.get("name", "")).strip()
+                    code = str(record.get("code", "")).strip()
+                    if not addr or not name or not code:
+                        continue
+                    parsed[mode][addr] = {
+                        "name": name,
+                        "code": code,
+                        "source": str(record.get("source", "learned")).strip() or "learned",
+                        "source_key": str(record.get("source_key", name)).strip() or name,
+                    }
+
+        return parsed
 
     def _persist_code_records(self):
-        payload = {"ir": [], "rf": []}
+        """Persist code records to customdata storage."""
+        payload = {"ir": {}, "rf": {}}
         for mode in ("ir", "rf"):
             for addr in sorted(self.code_records.get(mode, {}).keys()):
                 record = self.code_records[mode][addr]
-                payload[mode].append(
-                    {
-                        "address": addr,
-                        "name": record.get("name", ""),
-                        "code": record.get("code", ""),
-                        "source": record.get("source", "learned"),
-                        "source_key": record.get("source_key", record.get("name", "")),
-                    }
-                )
+                payload[mode][addr] = {
+                    "name": record.get("name", ""),
+                    "code": record.get("code", ""),
+                    "source": record.get("source", "learned"),
+                    "source_key": record.get("source_key", record.get("name", "")),
+                }
 
-        try:
-            self.code_file.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        except Exception as err:
-            LOGGER.error("Failed writing learned code store '%s': %s", self.code_file, err)
+        self.data_store[self.code_records_key] = payload
 
     def _import_legacy_learned_codes(self):
+        """Import learned codes from legacy customdata field if code_records is empty."""
+        if self.code_records["ir"] or self.code_records["rf"]:
+            return
+
         if self.learned_ir_codes:
             for name, code in self.learned_ir_codes.items():
                 addr = self._find_existing_code_node_address("ir", name) or self._next_code_address("ir")
@@ -982,6 +1008,7 @@ class BroadlinkController(BaseNode):
                 }
 
         if self.learned_ir_codes or self.learned_rf_codes:
+            LOGGER.info("Migrated legacy learned codes from customdata into code_records")
             self._persist_code_records()
 
     def force_update(self, command=None):
