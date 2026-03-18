@@ -1,158 +1,378 @@
-"""Broadlink hub wrapper used by PG3 nodes.
+"""
+Broadlink Client Wrapper
 
-This wrapper keeps Broadlink specifics in one place so new Broadlink device
-classes can be added later without changing node classes.
+Provides a high-level interface to the python-broadlink library with:
+- Automatic timeout management
+- Robust error handling
+- Comprehensive logging of all Broadlink traffic
 """
 
-from __future__ import annotations
-
-import base64
-from threading import Lock
+import logging
 import time
+import socket
 
-import broadlink
-
-
-class BroadlinkHubClient:
-    """Thin wrapper around python-broadlink remote functionality."""
-
-    def __init__(self, hub_ip: str, user_id: str = "", user_password: str = "") -> None:
-        self.hub_ip = hub_ip
-        self.user_id = user_id
-        self.user_password = user_password
-        self._device = None
-        self._lock = Lock()
-
-    @property
-    def connected(self) -> bool:
-        return self._device is not None
-
-    def connect(self) -> bool:
-        """Discover and authenticate the Broadlink device at the configured IP."""
-        with self._lock:
-            if not self.hub_ip:
-                raise ValueError("HUB_IP is required")
-
-            # hello() fetches devtype/mac, then auth() prepares encrypted session.
-            device = broadlink.hello(self.hub_ip)
-            if device is None:
-                raise RuntimeError(f"No Broadlink device found at {self.hub_ip}")
-            device.auth()
-            self._device = device
-            return True
-
-    def refresh(self) -> bool:
-        """Best-effort connectivity refresh."""
-        with self._lock:
-            if self._device is None:
-                return False
-            try:
-                self._device.ping()
-                return True
-            except Exception:
-                try:
-                    self._device.auth()
-                    return True
-                except Exception:
-                    self._device = None
-                    return False
-
-    def send_code(self, encoded_code: str) -> bool:
-        """Transmit an IR or RF packet to the Broadlink hub."""
-        packet = decode_code_string(encoded_code)
-
-        with self._lock:
-            if self._device is None:
-                self.connect()
-            self._device.send_data(packet)
-            return True
-
-    def learn_ir(self, timeout_sec: int = 30, poll_interval: float = 1.0) -> bytes:
-        """Learn a single IR packet and return raw Broadlink bytes."""
-        with self._lock:
-            if self._device is None:
-                self.connect()
-
-            self._device.enter_learning()
-            return self._wait_for_learned_packet(timeout_sec=timeout_sec, poll_interval=poll_interval)
-
-    def learn_rf(self, timeout_sec: int = 45, poll_interval: float = 1.0) -> bytes:
-        """Learn a single RF packet and return raw Broadlink bytes.
-
-        For devices that support RF sweep APIs we use sweep->check_frequency->find_rf_packet.
-        If not supported, we fall back to the generic learning method.
-        """
-        with self._lock:
-            if self._device is None:
-                self.connect()
-
-            if hasattr(self._device, "sweep_frequency") and hasattr(self._device, "check_frequency"):
-                self._device.sweep_frequency()
-                start = time.time()
-                found = False
-                frequency = None
-
-                while (time.time() - start) < timeout_sec:
-                    time.sleep(poll_interval)
-                    try:
-                        found, frequency = self._device.check_frequency()
-                    except Exception:
-                        continue
-                    if found:
-                        break
-
-                if not found:
-                    try:
-                        self._device.cancel_sweep_frequency()
-                    except Exception:
-                        pass
-                    raise TimeoutError("RF frequency sweep timed out")
-
-                self._device.find_rf_packet(frequency)
-                return self._wait_for_learned_packet(timeout_sec=timeout_sec, poll_interval=poll_interval)
-
-            # Some remote models learn RF through the same generic IR flow.
-            self._device.enter_learning()
-            return self._wait_for_learned_packet(timeout_sec=timeout_sec, poll_interval=poll_interval)
-
-    def _wait_for_learned_packet(self, timeout_sec: int = 30, poll_interval: float = 1.0) -> bytes:
-        """Poll the hub until a learned packet is available."""
-        start = time.time()
-        while (time.time() - start) < timeout_sec:
-            time.sleep(poll_interval)
-            try:
-                packet = self._device.check_data()
-            except Exception:
-                continue
-            if packet:
-                return packet
-
-        raise TimeoutError("No learned packet received before timeout")
-
-    def provision_ap(self, ssid: str, password: str, security_mode: int = 4, setup_ip: str = "255.255.255.255") -> bool:
-        """Provision a Broadlink device in AP mode using broadlink.setup."""
-        if not ssid:
-            raise ValueError("WIFI_SSID is required for AP setup")
-        if security_mode < 0 or security_mode > 4:
-            raise ValueError("WIFI_SECURITY_MODE must be between 0 and 4")
-
-        broadlink.setup(ssid=ssid, password=password, security_mode=security_mode, ip_address=setup_ip)
-        return True
+LOGGER = logging.getLogger(__name__)
 
 
-def decode_code_string(raw: str) -> bytes:
-    """Decode user code strings into Broadlink packet bytes.
-
-    Supported input:
-    - Hex string (with or without spaces)
-    - base64 with `b64:` prefix
+class BroadlinkClient:
     """
-    text = str(raw).strip()
-    if not text:
-        raise ValueError("Code string is empty")
+    Wrapper around python-broadlink API.
+    Handles device discovery, authentication, and control operations.
+    """
+    
+    DEFAULT_TIMEOUT = 5  # seconds
+    DEFAULT_PORT = 80
+    
+    def __init__(self, hub_ip, timeout=None):
+        """
+        Initialize Broadlink client.
+        
+        Args:
+            hub_ip: IP address of Broadlink hub
+            timeout: Network timeout in seconds (default: 5)
+        """
+        self.hub_ip = hub_ip
+        self.timeout = timeout or self.DEFAULT_TIMEOUT
+        self.device = None
+        self.authenticated = False
+        
+        LOGGER.info(f'BroadlinkClient initialized for {hub_ip} (timeout={self.timeout}s)')
+    
+    def discover(self):
+        """
+        Discover and connect to the Broadlink hub.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            import broadlink
+            
+            LOGGER.info(f'Attempting to discover Broadlink hub at {self.hub_ip}...')
+            
+            # Direct connection by IP
+            try:
+                self.device = broadlink.rm4pro(
+                    (self.hub_ip, self.DEFAULT_PORT),
+                    None,  # mac
+                    None,  # devtype
+                    allow_errors=False
+                )
+                self.device.timeout = self.timeout
+                LOGGER.debug(f'Device object created: {self.device}')
+            except Exception as e:
+                LOGGER.error(f'Failed to create device object for {self.hub_ip}: {e}')
+                return False
+            
+            # Authenticate
+            if not self.authenticate():
+                LOGGER.error('Authentication failed.')
+                return False
+            
+            LOGGER.info('Broadlink hub discovered and authenticated successfully.')
+            return True
+        
+        except Exception as e:
+            LOGGER.error(f'Exception during discovery: {e}', exc_info=True)
+            return False
+    
+    def authenticate(self):
+        """
+        Authenticate with the Broadlink hub.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self.device:
+                LOGGER.error('No device object available for authentication.')
+                return False
+            
+            LOGGER.debug('Sending auth() to hub...')
+            result = self.device.auth()
+            
+            if result:
+                self.authenticated = True
+                LOGGER.info('Hub authentication successful.')
+                return True
+            else:
+                LOGGER.warning('Hub authentication returned False.')
+                return False
+        
+        except socket.timeout:
+            LOGGER.error('Authentication timeout.')
+            return False
+        except Exception as e:
+            LOGGER.error(f'Exception during authentication: {e}', exc_info=True)
+            return False
+    
+    def check_authentication(self):
+        """
+        Verify current authentication status.
+        
+        Returns:
+            bool: True if authenticated, False otherwise
+        """
+        try:
+            if not self.device:
+                return False
+            
+            # Perform a lightweight auth check
+            result = self.device.auth()
+            self.authenticated = bool(result)
+            
+            if self.authenticated:
+                LOGGER.debug('Authentication check passed.')
+            else:
+                LOGGER.warning('Authentication check failed.')
+            
+            return self.authenticated
+        
+        except Exception as e:
+            LOGGER.error(f'Exception during auth check: {e}')
+            self.authenticated = False
+            return False
+    
+    def enter_learning_mode_ir(self):
+        """
+        Enter IR learning mode.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self._verify_device():
+                return False
+            
+            LOGGER.info('Entering IR learning mode...')
+            result = self.device.enter_learning()
+            
+            LOGGER.info(f'enter_learning() result: {result}')
+            return True
+        
+        except socket.timeout:
+            LOGGER.error('IR learning mode timeout.')
+            return False
+        except Exception as e:
+            LOGGER.error(f'Exception entering IR learning mode: {e}', exc_info=True)
+            return False
+    
+    def sweep_frequency_rf(self):
+        """
+        Sweep RF frequency (RF learning step 1).
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self._verify_device():
+                return False
+            
+            LOGGER.info('Starting RF frequency sweep...')
+            result = self.device.sweep_frequency()
+            
+            LOGGER.info(f'sweep_frequency() result: {result}')
+            return True
+        
+        except socket.timeout:
+            LOGGER.error('RF sweep timeout.')
+            return False
+        except Exception as e:
+            LOGGER.error(f'Exception during RF sweep: {e}', exc_info=True)
+            return False
+    
+    def check_frequency_rf(self):
+        """
+        Check RF frequency findings (RF learning step 2 part 1).
+        
+        Returns:
+            bool: True if frequency found, False otherwise
+        """
+        try:
+            if not self._verify_device():
+                return False
+            
+            LOGGER.debug('Checking RF frequency...')
+            result = self.device.check_frequency()
+            
+            if result:
+                LOGGER.info(f'RF frequency check passed: {result}')
+                return True
+            else:
+                LOGGER.warning('RF frequency check returned False.')
+                return False
+        
+        except socket.timeout:
+            LOGGER.error('RF frequency check timeout.')
+            return False
+        except Exception as e:
+            LOGGER.error(f'Exception checking RF frequency: {e}', exc_info=True)
+            return False
+    
+    def check_data(self, max_wait=30, poll_interval=0.5):
+        """
+        Check for learned data (IR or RF packet).
+        Polls until data received or timeout.
+        
+        Args:
+            max_wait: Maximum time to wait in seconds
+            poll_interval: Poll interval in seconds
+            
+        Returns:
+            bytes: Learned code data, or None if timeout/error
+        """
+        try:
+            if not self._verify_device():
+                return None
+            
+            LOGGER.debug(f'Checking for data (max_wait={max_wait}s, poll_interval={poll_interval}s)...')
+            
+            start_time = time.time()
+            
+            while time.time() - start_time < max_wait:
+                try:
+                    data = self.device.check_data()
+                    
+                    if data:
+                        LOGGER.info(f'Data received: {len(data)} bytes')
+                        LOGGER.debug(f'Data (hex): {data.hex()[:100]}...')
+                        return data
+                
+                except socket.timeout:
+                    # Timeout on this individual check is normal; continue polling
+                    pass
+                except Exception as e:
+                    LOGGER.debug(f'check_data exception (may be normal during polling): {e}')
+                
+                time.sleep(poll_interval)
+            
+            LOGGER.warning(f'No data received within {max_wait} seconds.')
+            return None
+        
+        except Exception as e:
+            LOGGER.error(f'Exception in check_data: {e}', exc_info=True)
+            return None
+    
+    def send_data(self, data):
+        """
+        Send learned code data via hub.
+        
+        Args:
+            data: bytes object containing the code
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self._verify_device():
+                return False
+            
+            LOGGER.info(f'Sending data: {len(data)} bytes')
+            LOGGER.debug(f'Data (hex): {data.hex()[:100]}...')
+            
+            result = self.device.send_data(data)
+            
+            LOGGER.info(f'send_data() result: {result}')
+            return True
+        
+        except socket.timeout:
+            LOGGER.error('Send data timeout.')
+            return False
+        except Exception as e:
+            LOGGER.error(f'Exception sending data: {e}', exc_info=True)
+            return False
+    
+    def get_temperature(self):
+        """
+        Query hub temperature (if supported).
+        
+        Returns:
+            float: Temperature in Celsius, or None
+        """
+        try:
+            if not self._verify_device():
+                return None
+            
+            if not hasattr(self.device, 'get_temperature'):
+                LOGGER.debug('Device does not support get_temperature()')
+                return None
+            
+            temp = self.device.get_temperature()
+            LOGGER.debug(f'Hub temperature: {temp}°C')
+            return temp
+        
+        except Exception as e:
+            LOGGER.debug(f'Exception getting temperature: {e}')
+            return None
+    
+    def _verify_device(self):
+        """
+        Verify device object exists and is authenticated.
+        
+        Returns:
+            bool: True if ready, False otherwise
+        """
+        if not self.device:
+            LOGGER.error('Device not initialized.')
+            return False
+        
+        if not self.authenticated:
+            LOGGER.warning('Device not authenticated. Attempting re-auth...')
+            if not self.authenticate():
+                LOGGER.error('Re-authentication failed.')
+                return False
+        
+        return True
+    
+    def close(self):
+        """
+        Close connection and cleanup.
+        """
+        try:
+            self.device = None
+            self.authenticated = False
+            LOGGER.info('Broadlink client closed.')
+        except Exception as e:
+            LOGGER.error(f'Exception closing client: {e}')
 
-    if text.lower().startswith("b64:"):
-        return base64.b64decode(text[4:].strip())
 
-    hex_text = "".join(text.split())
-    return bytes.fromhex(hex_text)
+class BroadlinkSetupHelper:
+    """
+    Helper for AP mode provisioning.
+    """
+    
+    @staticmethod
+    def provision_device(ssid, password, security_mode=4, host='255.255.255.255'):
+        """
+        Provision a Broadlink device in AP mode.
+        
+        Args:
+            ssid: Target Wi-Fi SSID
+            password: Target Wi-Fi password
+            security_mode: 0=open, 4=WPA (default)
+            host: Broadcast address for provisional packet
+            
+        Returns:
+            dict: Result dictionary, or None if error
+        """
+        try:
+            import broadlink
+            
+            LOGGER.info(f'Provisioning device: SSID={ssid}, security={security_mode}')
+            
+            result = broadlink.setup(
+                ssid=ssid,
+                password=password,
+                security_mode=security_mode,
+                host=host
+            )
+            
+            LOGGER.info(f'Provisioning result: {result}')
+            return result
+        
+        except socket.timeout:
+            LOGGER.error('Provisioning timeout.')
+            return None
+        except Exception as e:
+            LOGGER.error(f'Exception during provisioning: {e}', exc_info=True)
+            return None
