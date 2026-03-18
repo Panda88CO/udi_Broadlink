@@ -126,8 +126,6 @@ class BroadlinkIR(udi_interface.Node):
     ]
     commands = {
         'LEARNCODE': learn_code,
-        'DON': don,
-        'DOF': dof,
     }
     
     def __init__(self, polyglot, primary, address, name=None, private=False):
@@ -250,19 +248,7 @@ class BroadlinkIR(udi_interface.Node):
             self.setDriver('GV0', 0)
             self.learning = False
     
-    def don(self, command=None):
-        """
-        Turn on IR node (for testing).
-        """
-        LOGGER.info('IR DON command.')
-        self.setDriver('ST', 1)
     
-    def dof(self, command=None):
-        """
-        Turn off IR node.
-        """
-        LOGGER.info('IR DOF command.')
-        self.setDriver('ST', 0)
 
 
 # =====================================================================
@@ -281,8 +267,6 @@ class BroadlinkRF(udi_interface.Node):
     ]
     commands = {
         'LEARNCODE': learn_code,
-        'DON': don,
-        'DOF': dof,
     }
     
     def __init__(self, polyglot, primary, address, name=None, private=False):
@@ -418,19 +402,7 @@ class BroadlinkRF(udi_interface.Node):
             self.setDriver('GV0', 0)
             self.learning = False
     
-    def don(self, command=None):
-        """
-        Turn on RF node (for testing).
-        """
-        LOGGER.info('RF DON command.')
-        self.setDriver('ST', 1)
     
-    def dof(self, command=None):
-        """
-        Turn off RF node.
-        """
-        LOGGER.info('RF DOF command.')
-        self.setDriver('ST', 0)
 
 
 # =====================================================================
@@ -533,12 +505,4 @@ def send_code(self, command=None):
     if hasattr(self, 'send_code'):
         self.send_code(command)
 
-def don(self, command=None):
-    """Stub for DON command."""
-    if hasattr(self, 'don'):
-        self.don(command)
 
-def dof(self, command=None):
-    """Stub for DOF command."""
-    if hasattr(self, 'dof'):
-        self.dof(command)
