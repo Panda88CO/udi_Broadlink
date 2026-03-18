@@ -15,7 +15,7 @@ from config_parser import PluginConfig, build_config
 
 LOGGER = udi_interface.LOGGER
 Custom = udi_interface.Custom
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 
 LEARN_STATE_IDLE = 0
 LEARN_STATE_WAIT_BUTTON = 1
