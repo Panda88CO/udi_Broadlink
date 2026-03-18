@@ -247,6 +247,7 @@ class BroadlinkController(BaseNode):
         self.ir_nodes: Dict[str, BroadlinkCodeNode] = {}
         self.rf_nodes: Dict[str, BroadlinkCodeNode] = {}
         self.pending_renames: Dict[str, str] = {}
+        self.custom_data_loaded = False
 
         self._load_code_records()
 
@@ -264,7 +265,6 @@ class BroadlinkController(BaseNode):
         self.poly.addNode(self, conn_status="ST", rename=True)
 
     def start(self):
-        self._load_code_records()
         self._set("TIME", int(time.time()), 151)
         self.apply_config()
 
@@ -340,6 +340,7 @@ class BroadlinkController(BaseNode):
 
         # Load code records from customdata
         self._load_code_records_from_custom_data()
+        self.custom_data_loaded = True
 
         # If nodes are already initialized, refresh the dynamic node set.
         if self.ir_parent or self.rf_parent:
@@ -969,6 +970,10 @@ class BroadlinkController(BaseNode):
 
     def _persist_code_records(self):
         """Persist code records to customdata storage."""
+        if not self.custom_data_loaded:
+            LOGGER.debug("Skipping code record persistence until customdata has been loaded")
+            return
+
         payload = {"ir": {}, "rf": {}}
         for mode in ("ir", "rf"):
             for addr in sorted(self.code_records.get(mode, {}).keys()):
