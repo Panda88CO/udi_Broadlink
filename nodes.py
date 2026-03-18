@@ -95,7 +95,7 @@ class BroadlinkSetup(udi_interface.Node):
         LOGGER.info('Restart command received.')
         try:
             # Get the hub device from the node server
-            import udi_broadlink as ns_module
+            import udibroadlink as ns_module
             ns = getattr(ns_module, 'ns', None)
             if ns and hasattr(ns, 'get_hub_device'):
                 hub = ns.get_hub_device()
@@ -163,8 +163,8 @@ class BroadlinkIR(udi_interface.Node):
             self.setDriver('GV0', 0)  # Progress 0%
             
             # Get hub device from node server
-            import udi_broadlink
-            ns = udi_broadlink.BroadlinkNodeServer
+            import udibroadlink
+            ns = udibroadlink.BroadlinkNodeServer
             hub = None
             
             # Try to get from global (this is set during node server init)
@@ -230,7 +230,7 @@ class BroadlinkIR(udi_interface.Node):
             # Get reference to node server and add the learned code
             try:
                 # Import the main module to access the node server instance
-                from udi_broadlink import BroadlinkNodeServer
+                from udibroadlink import BroadlinkNodeServer
                 # This will be available after start
                 polyglot = self.polyglot
                 if hasattr(polyglot, 'nodes'):
@@ -317,8 +317,8 @@ class BroadlinkRF(udi_interface.Node):
             self.setDriver('GV0', 0)
             
             # Get hub device
-            import udi_broadlink
-            ns = udi_broadlink.BroadlinkNodeServer
+            import udibroadlink
+            ns = udibroadlink.BroadlinkNodeServer
             hub = None
             
             try:
@@ -399,7 +399,7 @@ class BroadlinkRF(udi_interface.Node):
             self.setDriver('GV0', 100)
             
             try:
-                from udi_broadlink import BroadlinkNodeServer
+                from udibroadlink import BroadlinkNodeServer
                 polyglot = self.polyglot
                 if hasattr(polyglot, 'nodes'):
                     for addr, node in polyglot.nodes.items():
@@ -482,8 +482,8 @@ class BroadlinkCode(udi_interface.Node):
                 code_bytes = bytes.fromhex(self.code_value)
             
             # Get hub device
-            import udi_broadlink
-            ns = udi_broadlink.BroadlinkNodeServer
+            import udibroadlink
+            ns = udibroadlink.BroadlinkNodeServer
             hub = None
             
             try:
