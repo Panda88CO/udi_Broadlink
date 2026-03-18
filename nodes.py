@@ -26,10 +26,10 @@ class BroadlinkSetup(udi_interface.Node):
     Handles AP provisioning and basic status.
     """
     
-    id = 'udi_broadlink'
+    id = 'broadlink_hub'
     drivers = [
         {'driver': 'ST', 'value': 0, 'uom': 2},  # Status (0=offline, 1=online)
-        {'driver': 'HEARTBEAT', 'value': 0, 'uom': 2},  # Heartbeat
+        {'driver': 'GV1', 'value': 0, 'uom': 2},  # Heartbeat (use GV1 per driver limits)
     ]
     commands = {
         'APSETUP': set_ap_mode,

@@ -169,7 +169,7 @@ def _sync_node_renames(self):
 ### ✓ Explicit 5-Second Timeout
 ```python
 import broadlink
-device = broadlink.rm4pro((hub_ip, 80), None, None, allow_errors=False)
+device = broadlink.hello(hub_ip)  # or use broadlink.discover() to locate the device by IP
 device.timeout = 5  # ← CRITICAL: Prevents indefinite hangs
 ```
 

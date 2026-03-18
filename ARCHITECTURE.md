@@ -121,8 +121,11 @@ The Broadlink library can hang indefinitely on network timeouts. Blocks entire s
 ```python
 import broadlink
 
-device = broadlink.rm4pro((hub_ip, 80), None, None, allow_errors=False)
-device.timeout = 5  # ← CRITICAL: explicit 5-second timeout
+device = broadlink.hello(hub_ip)  # prefer hello(); fall back to broadlink.discover() and match by IP
+try:
+    device.timeout = 5  # ← CRITICAL: explicit 5-second timeout
+except Exception:
+    pass
 
 if device.auth():
     # Safe to use

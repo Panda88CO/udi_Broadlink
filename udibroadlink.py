@@ -14,6 +14,7 @@ import logging
 import time
 import json
 import base64
+import sys
 from nodes import BroadlinkSetup, BroadlinkIR, BroadlinkRF, BroadlinkCode
 
 # =====================================================================
@@ -30,32 +31,39 @@ class BroadlinkNodeServer(udi_interface.Node):
     Main Node Server controller. Initializes all nodes and manages lifecycle.
     """
     
-    def __init__(self, polyglot):
+    def __init__(self, polyglot, primary='broadlink_hub', address='broadlink_hub', name='broadlink_hub'):
         """
         Initialize the node server.
         
         Args:
             polyglot: UDI interface polyglot object
         """
-        super().__init__(polyglot, 'udi_broadlink', 'udi_broadlink', True, 'udi_broadlink')
+        # Controller node should be registered with primary, address, name and marked private
+        super().__init__(polyglot, primary, address, name, True)
         
         self.polyglot = polyglot
         self.ready = False
+        self.hb = 0
         self.hub_device = None
         self.ir_parent = None
         self.rf_parent = None
         self.code_nodes = {}  # {node_address: node_object}
         
         # Handler bindings
-        self.polyglot.onConfig(self.handle_config)
-        self.polyglot.onStop(self.handle_stop)
-        self.polyglot.onStart(self.handle_start)
-        self.polyglot.onDelete(self.handle_delete)
-        self.polyglot.onPoll(self.poll)
+        # Handler bindings (subscribe to events per PG examples)
+        self.polyglot.subscribe(self.polyglot.CUSTOMPARAMS, self.handle_config)
+        self.polyglot.subscribe(self.polyglot.STOP, self.handle_stop)
+        self.polyglot.subscribe(self.polyglot.START, self.handle_start, self.address)
+        self.polyglot.subscribe(self.polyglot.DELETE, self.handle_delete)
+        self.polyglot.subscribe(self.polyglot.POLL, self.poll)
         
-        # Event handlers
-        self.polyglot.onEvent('ADDNODEDONE', self.on_add_node_done)
-        self.polyglot.onEvent('ST', self.on_status_update)
+        # Event handlers (use subscribe for Polyglot events)
+        self.polyglot.subscribe(self.polyglot.ADDNODEDONE, self.on_add_node_done)
+        try:
+            self.polyglot.subscribe(self.polyglot.ST, self.on_status_update)
+        except Exception:
+            # Some Polyglot versions may not expose ST constant; ignore if not available
+            pass
         
         LOGGER.info('BroadlinkNodeServer initialized.')
     
@@ -148,8 +156,44 @@ class BroadlinkNodeServer(udi_interface.Node):
             
             # Direct discovery by IP
             try:
-                self.hub_device = broadlink.rm4pro((hub_ip, 80), None, None, allow_errors=False)
-                self.hub_device.timeout = 5  # Explicit 5-second timeout
+                # Prefer documented hello() helper which sends a hello packet to the hub
+                # If hello() is unavailable or fails, fall back to discover() and
+                # select the device matching the configured IP. Avoid hard-coding
+                # a specific device class (e.g., rm4pro) so multiple hub types
+                # are supported.
+                self.hub_device = None
+                try:
+                    self.hub_device = broadlink.hello(hub_ip)
+                except Exception:
+                    # Try network discovery and match by IP
+                    try:
+                        devices = broadlink.discover(timeout=5)
+                        if devices:
+                            for dev in devices:
+                                try:
+                                    host = getattr(dev, 'host', None)
+                                    if host and host[0] == hub_ip:
+                                        self.hub_device = dev
+                                        break
+                                except Exception:
+                                    continue
+                    except Exception:
+                        # If discover() isn't available or fails, attempt a
+                        # generic device constructor if present; otherwise
+                        # let the outer exception handler record the failure.
+                        try:
+                            # Some broadlink versions expose a generic device() helper
+                            self.hub_device = broadlink.device((hub_ip, 80), None, None, allow_errors=False)
+                        except Exception:
+                            # Leave hub_device as None so the outer handler logs the error
+                            self.hub_device = None
+
+            # Set an explicit timeout where supported
+                try:
+                    if self.hub_device is not None:
+                        self.hub_device.timeout = 5  # Explicit 5-second timeout
+                except Exception:
+                    pass
             except Exception as e:
                 LOGGER.error(f'Failed to connect to hub at {hub_ip}: {e}')
                 return False
@@ -179,7 +223,7 @@ class BroadlinkNodeServer(udi_interface.Node):
             ir_address = 'ir'
             if ir_address not in self.polyglot.nodes:
                 LOGGER.info('Creating IR parent node...')
-                self.ir_parent = BroadlinkIR(self.polyglot, 'udi_broadlink', ir_address)
+                self.ir_parent = BroadlinkIR(self.polyglot, 'broadlink_hub', ir_address, 'Broadlink IR')
                 self.polyglot.addNode(self.ir_parent)
             else:
                 self.ir_parent = self.polyglot.nodes[ir_address]
@@ -188,7 +232,7 @@ class BroadlinkNodeServer(udi_interface.Node):
             rf_address = 'rf'
             if rf_address not in self.polyglot.nodes:
                 LOGGER.info('Creating RF parent node...')
-                self.rf_parent = BroadlinkRF(self.polyglot, 'udi_broadlink', rf_address)
+                self.rf_parent = BroadlinkRF(self.polyglot, 'broadlink_hub', rf_address, 'Broadlink RF')
                 self.polyglot.addNode(self.rf_parent)
             else:
                 self.rf_parent = self.polyglot.nodes[rf_address]
@@ -275,7 +319,7 @@ class BroadlinkNodeServer(udi_interface.Node):
                 parent = self.ir_parent if parent_type == 'ir' else self.rf_parent
                 node = BroadlinkCode(
                     self.polyglot,
-                    'udi_broadlink',
+                    'broadlink_hub',
                     addr,
                     parent.address,
                     code_name,
@@ -308,11 +352,16 @@ class BroadlinkNodeServer(udi_interface.Node):
         try:
             if not self.ready:
                 return
-            
-            # Toggle heartbeat driver
-            current_st = self.getDriver('ST')
-            new_st = 0 if current_st == 1 else 1
-            self.setDriver('ST', new_st)
+
+            # Toggle heartbeat by sending a DON/DOF report command to ISY
+            try:
+                self.hb = 0 if self.hb == 1 else 1
+                if self.hb == 1:
+                    self.reportCmd('DON', 2)
+                else:
+                    self.reportCmd('DOF', 2)
+            except Exception as e:
+                LOGGER.debug(f'Heartbeat reportCmd failed: {e}')
             
         except Exception as e:
             LOGGER.error(f'Exception in short poll: {e}', exc_info=True)
@@ -414,16 +463,19 @@ class BroadlinkNodeServer(udi_interface.Node):
 # =====================================================================
 if __name__ == '__main__':
     try:
-        polyglot = udi_interface.Interface([BroadlinkSetup, BroadlinkIR, BroadlinkRF, BroadlinkCode])
-        polyglot.start('0.1.0')
-        
-        # Get the node server instance
-        ns = polyglot.nodes['udi_broadlink']
-        
-        # Keep the process alive
-        while True:
-            time.sleep(1)
-    
+        # Create an instance of the Polyglot interface with no pre-registered node classes
+        polyglot = udi_interface.Interface([])
+
+        # Initialize the interface
+        polyglot.start()
+
+        # Instantiate the controller node (this registers the node with Polyglot)
+        ns = BroadlinkNodeServer(polyglot, 'broadlink_hub', 'broadlink_hub', 'Broadlink hub')
+
+        # Enter main event loop waiting for messages from Polyglot
+        polyglot.runForever()
+    except (KeyboardInterrupt, SystemExit):
+        sys.exit(0)
     except Exception as e:
         LOGGER.error(f'Fatal error in main: {e}', exc_info=True)
-        exit(1)
+        sys.exit(1)

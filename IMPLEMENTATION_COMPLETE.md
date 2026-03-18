@@ -166,8 +166,12 @@
 ┌─────────────────────────────────────┐
 │  Explicit Timeout (5 seconds)        │
 ├─────────────────────────────────────┤
-│ device = broadlink.rm4pro(...)      │
-│ device.timeout = 5  ← ✓ CRITICAL    │
+│ device = broadlink.hello(hub_ip)    │
+│ # or use broadlink.discover() to find the device by IP
+│ try:                                │
+│     device.timeout = 5  ← ✓ CRITICAL│
+│ except Exception:                   │
+│     pass                            │
 │ device.auth()       [blocks ≤5s]    │
 └─────────────────────────────────────┘
 ```

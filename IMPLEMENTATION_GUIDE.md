@@ -427,10 +427,10 @@ except Exception as e:
 
 1. Extend `BroadlinkClient`:
    ```python
-   class BroadlinkRM4Client(BroadlinkClient):
-       def __init__(self, hub_ip):
-           super().__init__(hub_ip)
-           self.device_type = 'rm4pro'
+     class BroadlinkCustomClient(BroadlinkClient):
+       def __init__(self, hub_ip, device_type='your_device_type'):
+         super().__init__(hub_ip)
+         self.device_type = device_type
    ```
 
 2. Override methods for device-specific behavior

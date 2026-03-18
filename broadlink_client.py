@@ -49,20 +49,41 @@ class BroadlinkClient:
             import broadlink
             
             LOGGER.info(f'Attempting to discover Broadlink hub at {self.hub_ip}...')
-            
-            # Direct connection by IP
+
+            # Prefer hello() by IP; fall back to discover() to locate device by IP.
+            self.device = None
             try:
-                self.device = broadlink.rm4pro(
-                    (self.hub_ip, self.DEFAULT_PORT),
-                    None,  # mac
-                    None,  # devtype
-                    allow_errors=False
-                )
-                self.device.timeout = self.timeout
-                LOGGER.debug(f'Device object created: {self.device}')
-            except Exception as e:
-                LOGGER.error(f'Failed to create device object for {self.hub_ip}: {e}')
+                try:
+                    self.device = broadlink.hello(self.hub_ip)
+                except Exception:
+                    # discover() returns iterable of devices; match by host IP
+                    try:
+                        devices = broadlink.discover(timeout=self.timeout)
+                        if devices:
+                            for dev in devices:
+                                try:
+                                    host = getattr(dev, 'host', None)
+                                    if host and host[0] == self.hub_ip:
+                                        self.device = dev
+                                        break
+                                except Exception:
+                                    continue
+                    except Exception:
+                        # As a last resort, attempt a generic device constructor if available
+                        try:
+                            self.device = broadlink.device((self.hub_ip, self.DEFAULT_PORT), None, None, allow_errors=False)
+                        except Exception as e:
+                            LOGGER.error(f'Failed to create generic device object for {self.hub_ip}: {e}')
+                            return False
+
+            if not self.device:
+                LOGGER.error(f'No Broadlink device found for IP {self.hub_ip}.')
                 return False
+
+            try:
+                self.device.timeout = self.timeout
+            except Exception:
+                pass
             
             # Authenticate
             if not self.authenticate():
