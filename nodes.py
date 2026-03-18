@@ -246,11 +246,13 @@ class BroadlinkController(BaseNode):
         self.rf_parent: BroadlinkRemoteNode | None = None
         self.ir_nodes: Dict[str, BroadlinkCodeNode] = {}
         self.rf_nodes: Dict[str, BroadlinkCodeNode] = {}
+        self.pending_renames: Dict[str, str] = {}
 
         self._load_code_records()
 
         self.poly.subscribe(self.poly.START, self.start, self.address)
         self.poly.subscribe(self.poly.STOP, self.stop)
+        self.poly.subscribe(self.poly.ADDNODEDONE, self._handle_add_node_done)
         self.poly.subscribe(self.poly.POLL, self.poll)
         self.poly.subscribe(self.poly.CUSTOMPARAMS, self.handle_params)
         self.poly.subscribe(self.poly.CUSTOMDATA, self.handle_custom_data)
@@ -278,6 +280,34 @@ class BroadlinkController(BaseNode):
     def handle_log_level(self, level):
         if isinstance(level, dict) and "level" in level:
             LOGGER.info("New log level: %s", level["level"])
+
+    def _handle_add_node_done(self, node):
+        address = _canonical_address(getattr(node, "address", "") or (node.get("address", "") if isinstance(node, dict) else ""))
+        if not address:
+            return
+
+        desired_name = self.pending_renames.pop(address, "")
+        if not desired_name:
+            return
+
+        target = self.poly.getNodes().get(address)
+        if target is None:
+            for raw_addr, existing_node in self.poly.getNodes().items():
+                if _canonical_address(raw_addr) == address:
+                    target = existing_node
+                    break
+
+        if target is None:
+            LOGGER.debug("ADDNODEDONE for %s but node object was not found for deferred rename", address)
+            return
+
+        current_name = str(getattr(target, "name", "")).strip()
+        if current_name == desired_name:
+            LOGGER.debug("ADDNODEDONE rename skipped for %s because name already matches", address)
+            return
+
+        LOGGER.info("ADDNODEDONE applying deferred rename address=%s old=%s new=%s", address, current_name, desired_name)
+        target.rename(desired_name)
 
     def handle_params(self, custom_params):
         self.parameters.load(custom_params)
@@ -452,6 +482,7 @@ class BroadlinkController(BaseNode):
         self._log_node_routing_state("before_reconcile")
         self._capture_node_renames()
         self._sync_config_records()
+        self._adopt_existing_node_names()
         self._ensure_parent_nodes()
         if not self.ir_parent or not self.rf_parent:
             LOGGER.debug(
@@ -480,6 +511,52 @@ class BroadlinkController(BaseNode):
             runtime_rf,
             runtime_ir,
         )
+
+    def _adopt_existing_node_names(self):
+        """Use names already stored in PG3/runtime so startup does not overwrite user renames."""
+        adopted = []
+        existing_nodes = self.poly.getNodes()
+        runtime_name_by_addr = {}
+
+        for raw_addr, node in existing_nodes.items():
+            canon_addr = _canonical_address(raw_addr)
+            if not canon_addr or canon_addr in {"setup", "blirhub", "blrfhub"}:
+                continue
+            runtime_name = str(getattr(node, "name", "")).strip()
+            if runtime_name:
+                runtime_name_by_addr[canon_addr] = runtime_name
+
+        get_node_name = getattr(self.poly, "getNodeNameFromDb", None)
+
+        for mode in ("ir", "rf"):
+            for addr, record in self.code_records.get(mode, {}).items():
+                existing_name = runtime_name_by_addr.get(addr, "")
+                if not existing_name and callable(get_node_name):
+                    try:
+                        existing_name = str(get_node_name(addr) or "").strip()
+                    except Exception:
+                        existing_name = ""
+
+                if not existing_name:
+                    continue
+
+                if record.get("name") == existing_name:
+                    continue
+
+                record["name"] = existing_name
+                adopted.append((addr, existing_name))
+
+        if adopted:
+            LOGGER.info("Adopted existing node names from PG3/runtime: %s", adopted)
+            self._persist_code_records()
+
+    def _queue_node_rename(self, address: str, desired_name: str):
+        canon_addr = _canonical_address(address)
+        desired = str(desired_name or "").strip()
+        if not canon_addr or not desired:
+            return
+        self.pending_renames[canon_addr] = desired
+        LOGGER.debug("Queued deferred rename address=%s desired_name=%s", canon_addr, desired)
 
     def _seed_records_from_pg3_nodes(self):
         """Adopt existing PG3 nodes so commands can route before codes are configured."""
@@ -569,11 +646,13 @@ class BroadlinkController(BaseNode):
 
         if not self.ir_parent:
             self.ir_parent = BroadlinkRemoteNode(self.poly, "blirhub", "blirhub", "Broadlink IR", "ir", self)
-            self.poly.addNode(self.ir_parent, rename=True)
+            self.poly.addNode(self.ir_parent, rename=False)
+            self._queue_node_rename(self.ir_parent.address, self.ir_parent.name)
 
         if not self.rf_parent:
             self.rf_parent = BroadlinkRemoteNode(self.poly, "blrfhub", "blrfhub", "Broadlink RF", "rf", self)
-            self.poly.addNode(self.rf_parent, rename=True)
+            self.poly.addNode(self.rf_parent, rename=False)
+            self._queue_node_rename(self.rf_parent.address, self.rf_parent.name)
 
     def _delete_mode_nodes(self, mode: str):
         node_map = self.ir_nodes if mode == "ir" else self.rf_nodes
@@ -619,7 +698,10 @@ class BroadlinkController(BaseNode):
                 node = node_map[addr]
                 node.set_code_value(code_value)
                 if node.name != display_name:
-                    node.rename(display_name)
+                    self._queue_node_rename(addr, display_name)
+                    if getattr(node, "added", False):
+                        LOGGER.info("Applying immediate rename for ready node address=%s old=%s new=%s", addr, node.name, display_name)
+                        node.rename(display_name)
                 continue
 
             stale_raw_addr = canonical_to_raw.get(addr)
@@ -627,8 +709,9 @@ class BroadlinkController(BaseNode):
                 self.poly.delNode(stale_raw_addr)
 
             node = BroadlinkCodeNode(self.poly, primary, addr, display_name, mode, code_value, self)
-            self.poly.addNode(node, rename=True)
+            self.poly.addNode(node, rename=False)
             node_map[addr] = node
+            self._queue_node_rename(addr, display_name)
             LOGGER.info("Registered %s code node address=%s name=%s", mode.upper(), addr, display_name)
 
         for addr in list(node_map.keys()):
