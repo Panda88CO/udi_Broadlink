@@ -20,6 +20,7 @@ You now have a **complete, production-grade Broadlink Node Server** for UDI Poly
 - Error handling (hub not found → notice, doesn't crash)
 
 **Key Methods:**
+- `handle_start()` — Initializes on startup
 - `on_add_node_done()` — Sets ready=True when nodes registered
 - `_sync_node_renames()` — Persists user-initiated renames
 - `_discover_and_auth()` — Connects to hub with timeout
