@@ -268,6 +268,7 @@ class BroadlinkController(BaseNode):
 
     def stop(self):
         try:
+            self._prune_deleted_code_records()
             self.update_codes(notify=False)
         except Exception as err:
             LOGGER.error("Failed to persist codes during stop: %s", err)
@@ -649,6 +650,29 @@ class BroadlinkController(BaseNode):
                 continue
             if _address_matches_mode(canon_addr, "ir") or _address_matches_mode(canon_addr, "rf"):
                 self.poly.delNode(node_addr)
+
+    def _prune_deleted_code_records(self):
+        """Drop persisted learned nodes that were deleted from the live runtime."""
+        runtime_nodes = self.poly.getNodes()
+        runtime_addresses = {_canonical_address(addr) for addr in runtime_nodes.keys()}
+        removed: list[str] = []
+
+        for mode in ("ir", "rf"):
+            records = self.code_records.get(mode, {})
+            for addr in list(records.keys()):
+                record = records[addr]
+                if record.get("source") == "config":
+                    continue
+                if addr in runtime_addresses:
+                    continue
+                removed.append(addr)
+                del records[addr]
+
+        if removed:
+            LOGGER.info("Pruned deleted code records before stop: %s", sorted(removed))
+            self._persist_code_records()
+        else:
+            LOGGER.debug("Stop prune: no deleted dynamic code records found")
 
     def _safe_code_map(self, candidate) -> Dict[str, str]:
         if not isinstance(candidate, dict):
