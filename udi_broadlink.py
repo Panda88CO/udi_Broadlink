@@ -415,7 +415,7 @@ class BroadlinkNodeServer(udi_interface.Node):
 if __name__ == '__main__':
     try:
         polyglot = udi_interface.Interface([BroadlinkSetup, BroadlinkIR, BroadlinkRF, BroadlinkCode])
-        polyglot.start()
+        polyglot.start('0.1.0')
         
         # Get the node server instance
         ns = polyglot.nodes['udi_broadlink']
