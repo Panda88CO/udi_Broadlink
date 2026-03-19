@@ -56,7 +56,7 @@ class BroadlinkNodeServer(udi_interface.Node):
         # Handler bindings (subscribe to events per PG examples)
         self.polyglot.subscribe(self.polyglot.CUSTOMPARAMS, self.handle_config)
         self.polyglot.subscribe(self.polyglot.STOP, self.handle_stop)
-        self.polyglot.subscribe(self.polyglot.START, self.handle_start, self.address)
+        self.polyglot.subscribe(self.polyglot.START, self.handle_start, address)
         self.polyglot.subscribe(self.polyglot.DELETE, self.handle_delete)
         self.polyglot.subscribe(self.polyglot.POLL, self.poll)
         
