@@ -83,6 +83,12 @@ class BroadlinkNodeServer(udi_interface.Node):
         self.polyglot.subscribe(self.polyglot.ADDNODEDONE, self.node_queue)
         LOGGER.debug('Subscribed to CUSTOMPARAMS/CONFIGDONE/STOP/START/DELETE/POLL/ADDNODEDONE events.')
 
+        try:
+            self.polyglot.ready()
+            LOGGER.debug('polyglot.ready() called in __init__ before controller addNode.')
+        except Exception as e:
+            LOGGER.error(f'polyglot.ready() failed in __init__: {e}', exc_info=True)
+
         # Netro-style constructor behavior: explicitly add controller node.
         # This guarantees the primary node exists before adding child nodes.
         try:
@@ -589,9 +595,7 @@ def main():
         ns = BroadlinkNodeServer(polyglot, 'broadlink_hub', 'broadlink_hub', 'Broadlink hub')
         LOGGER.debug('BroadlinkNodeServer instance created.')
 
-        # Signal that startup initialization is complete
-        polyglot.ready()
-        LOGGER.debug('polyglot.ready() called; entering runForever().')
+        LOGGER.debug('Entering runForever() after constructor-managed ready/addNode ordering.')
 
         # Enter main event loop waiting for messages from Polyglot
         polyglot.runForever()
