@@ -42,6 +42,9 @@ class BroadlinkNodeServer(udi_interface.Node):
         super().__init__(polyglot, primary, address, name)
         
         self.polyglot = polyglot
+        self.primary = primary
+        self.address = address
+        self.name = name
         self.ready = False
         self.hb = 0
         self.hub_device = None
