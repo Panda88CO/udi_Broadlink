@@ -72,13 +72,7 @@ class BroadlinkNodeServer(udi_interface.Node):
         self.polyglot.subscribe(self.polyglot.DELETE, self.handle_delete)
         self.polyglot.subscribe(self.polyglot.POLL, self.poll)
         
-        # Event handlers (use subscribe for Polyglot events)
         self.polyglot.subscribe(self.polyglot.ADDNODEDONE, self.on_add_node_done)
-        try:
-            self.polyglot.subscribe(self.polyglot.ST, self.on_status_update)
-        except Exception:
-            # Some Polyglot versions may not expose ST constant; ignore if not available
-            pass
 
         # Netro-style constructor behavior: explicitly add controller node.
         # This guarantees the primary node exists before adding child nodes.
@@ -183,12 +177,6 @@ class BroadlinkNodeServer(udi_interface.Node):
         # Now safe to update drivers
         self.setDriver('ST', 1, force=True)
         LOGGER.info('Node server ready flag set to True.')
-    
-    def on_status_update(self, event, *args, **kwargs):
-        """
-        Handle status update event.
-        """
-        LOGGER.debug(f'Status update event: {event}')
     
     def _discover_and_auth(self):
         """
