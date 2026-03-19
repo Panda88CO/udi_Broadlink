@@ -11,7 +11,7 @@
   "name": "Broadlink Remote",
   "docs": "README.md",
   "type": "python3",
-  "executable": "udi_broadlink.py",
+  "executable": "udibroadlink.py",
   "install": "install.sh",
   "shortPoll": 60,
   "longPoll": 300,
