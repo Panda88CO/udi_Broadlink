@@ -43,6 +43,12 @@ class BroadlinkNodeServer(udi_interface.Node):
         """
         # Controller node should be registered with primary, address, name
         super().__init__(polyglot, primary, address, name)
+        LOGGER.debug(
+            'BroadlinkNodeServer __init__ start: primary=%s address=%s name=%s',
+            primary,
+            address,
+            name,
+        )
         
         self.polyglot = polyglot
         self.primary = primary
@@ -58,6 +64,7 @@ class BroadlinkNodeServer(udi_interface.Node):
         self.custom_params_done = False
         self.config_done = False
         self.controller_registered = False
+        LOGGER.debug('Initial startup flags: ready=%s custom_params_done=%s config_done=%s', self.ready, self.custom_params_done, self.config_done)
         
         # Handler bindings
         # Handler bindings (subscribe to events per PG examples)
@@ -73,25 +80,30 @@ class BroadlinkNodeServer(udi_interface.Node):
         self.polyglot.subscribe(self.polyglot.POLL, self.poll)
         
         self.polyglot.subscribe(self.polyglot.ADDNODEDONE, self.on_add_node_done)
+        LOGGER.debug('Subscribed to CUSTOMPARAMS/CONFIGDONE/STOP/START/DELETE/POLL/ADDNODEDONE events.')
 
         # Netro-style constructor behavior: explicitly add controller node.
         # This guarantees the primary node exists before adding child nodes.
         try:
+            LOGGER.debug('Attempting controller addNode with extended kwargs.')
             self.polyglot.addNode(self, conn_status=None, rename=True)
         except TypeError:
             # Fallback for interfaces without extended addNode kwargs.
+            LOGGER.debug('Extended addNode kwargs unsupported; retrying addNode without kwargs.')
             self.polyglot.addNode(self)
         except Exception as e:
             LOGGER.error(f'Controller addNode failed in __init__: {e}', exc_info=True)
 
         # Wait briefly for the controller node to be visible in the node map.
-        for _ in range(15):
+        for attempt in range(15):
             try:
                 if self.address in getattr(self.polyglot, 'nodes', {}):
                     self.controller_registered = True
+                    LOGGER.debug('Controller node registration confirmed on attempt %s.', attempt + 1)
                     break
             except Exception:
                 pass
+            LOGGER.debug('Controller node not yet visible in node map; wait attempt %s/15.', attempt + 1)
             time.sleep(1)
         if not self.controller_registered:
             LOGGER.warning('Controller node registration not confirmed yet; startup will continue guarded.')
@@ -106,6 +118,7 @@ class BroadlinkNodeServer(udi_interface.Node):
             config: Configuration dictionary
         """
         LOGGER.info('Configuration received.')
+        LOGGER.debug('handle_config payload type=%s keys=%s', type(config).__name__, list(config.keys()) if isinstance(config, dict) else 'n/a')
         
         # Extract custom parameters
         self.custom_params = config.get('customParams', {})
@@ -122,6 +135,13 @@ class BroadlinkNodeServer(udi_interface.Node):
         Called when the node server starts. Initialize discovery and nodes.
         """
         LOGGER.info('Node server starting...')
+        LOGGER.debug(
+            'handle_start entered with flags: controller_registered=%s custom_params_done=%s config_done=%s ready=%s',
+            self.controller_registered,
+            self.custom_params_done,
+            self.config_done,
+            self.ready,
+        )
 
         # Netro-style startup guard: allow time for initial config callbacks.
         wait_left = 15
@@ -131,23 +151,37 @@ class BroadlinkNodeServer(udi_interface.Node):
         ):
             time.sleep(1)
             wait_left -= 1
+            LOGGER.debug(
+                'Startup guard waiting: wait_left=%s controller_registered=%s custom_params_done=%s config_done=%s',
+                wait_left,
+                self.controller_registered,
+                self.custom_params_done,
+                self.config_done,
+            )
             if wait_left % 5 == 0:
                 LOGGER.info('Waiting for initial configuration callbacks...')
+        LOGGER.debug('Startup guard complete: controller_registered=%s custom_params_done=%s config_done=%s', self.controller_registered, self.custom_params_done, self.config_done)
         
         # Set ready flag to False until nodes are fully initialized
         self.ready = False
+        LOGGER.debug('Ready flag cleared for startup initialization.')
         
         # Discover and authenticate to Broadlink hub
+        LOGGER.debug('Starting Broadlink discovery/authentication phase.')
         if not self._discover_and_auth():
             LOGGER.error('Failed to discover/authenticate hub. Posting notice and continuing.')
             self.polyglot.Notices['hub_not_found'] = (
                 'Broadlink hub not found. Check HUB_IP in configuration.'
             )
+        else:
+            LOGGER.debug('Broadlink discovery/authentication phase completed successfully.')
         
         # Create parent nodes if they don't exist
+        LOGGER.debug('Starting parent node verification/creation phase.')
         self._ensure_parent_nodes()
         
         # Build code subnodes from configured parameters
+        LOGGER.debug('Starting dynamic code node build phase.')
         self._build_code_nodes()
         
         LOGGER.info('Node server startup sequence complete.')
@@ -172,6 +206,7 @@ class BroadlinkNodeServer(udi_interface.Node):
         This is the correct point to set ready=True and update drivers.
         """
         LOGGER.info('ADDNODEDONE event received. Nodes fully registered.')
+        LOGGER.debug('ADDNODEDONE payload: event=%s args=%s kwargs=%s', event, args, kwargs)
         self.ready = True
         
         # Now safe to update drivers
@@ -187,6 +222,7 @@ class BroadlinkNodeServer(udi_interface.Node):
         """
         try:
             hub_ip = self.custom_params.get('HUB_IP', '').strip()
+            LOGGER.debug('Discovery starting with HUB_IP=%s', hub_ip if hub_ip else '<empty>')
             if not hub_ip:
                 LOGGER.error('HUB_IP not configured.')
                 return False
@@ -205,21 +241,26 @@ class BroadlinkNodeServer(udi_interface.Node):
                 # are supported.
                 self.hub_device = None
                 try:
+                    LOGGER.debug('Trying broadlink.hello() discovery path.')
                     self.hub_device = broadlink.hello(hub_ip)
                 except Exception:
+                    LOGGER.debug('broadlink.hello() failed; trying discover() fallback.')
                     # Try network discovery and match by IP
                     try:
                         devices = broadlink.discover(timeout=5)
+                        LOGGER.debug('broadlink.discover() returned %s device(s).', len(devices) if devices else 0)
                         if devices:
                             for dev in devices:
                                 try:
                                     host = getattr(dev, 'host', None)
                                     if host and host[0] == hub_ip:
                                         self.hub_device = dev
+                                        LOGGER.debug('Matched discovered device for configured HUB_IP.')
                                         break
                                 except Exception:
                                     continue
                     except Exception:
+                        LOGGER.debug('broadlink.discover() fallback failed; trying generic device constructor.')
                         # If discover() isn't available or fails, attempt a
                         # generic device constructor if present; otherwise
                         # let the outer exception handler record the failure.
@@ -234,6 +275,7 @@ class BroadlinkNodeServer(udi_interface.Node):
                 try:
                     if self.hub_device is not None:
                         self.hub_device.timeout = 5  # Explicit 5-second timeout
+                        LOGGER.debug('Applied explicit timeout to hub device.')
                 except Exception:
                     pass
             except Exception as e:
@@ -242,6 +284,7 @@ class BroadlinkNodeServer(udi_interface.Node):
             
             # Attempt authentication
             try:
+                LOGGER.debug('Attempting hub authentication.')
                 if not self.hub_device.auth():
                     LOGGER.error('Authentication failed for hub.')
                     return False
@@ -263,21 +306,27 @@ class BroadlinkNodeServer(udi_interface.Node):
         try:
             # Check if IR parent exists
             ir_address = 'ir'
+            LOGGER.debug('Checking IR parent node address=%s', ir_address)
             if ir_address not in self.polyglot.nodes:
                 LOGGER.info('Creating IR parent node...')
                 self.ir_parent = BroadlinkIR(self.polyglot, 'broadlink_hub', ir_address, 'Broadlink IR')
                 self.polyglot.addNode(self.ir_parent)
+                LOGGER.debug('IR parent addNode submitted.')
             else:
                 self.ir_parent = self.polyglot.nodes[ir_address]
+                LOGGER.debug('IR parent node already present.')
             
             # Check if RF parent exists
             rf_address = 'rf'
+            LOGGER.debug('Checking RF parent node address=%s', rf_address)
             if rf_address not in self.polyglot.nodes:
                 LOGGER.info('Creating RF parent node...')
                 self.rf_parent = BroadlinkRF(self.polyglot, 'broadlink_hub', rf_address, 'Broadlink RF')
                 self.polyglot.addNode(self.rf_parent)
+                LOGGER.debug('RF parent addNode submitted.')
             else:
                 self.rf_parent = self.polyglot.nodes[rf_address]
+                LOGGER.debug('RF parent node already present.')
             
             LOGGER.info('Parent nodes verified/created.')
         
@@ -292,11 +341,13 @@ class BroadlinkNodeServer(udi_interface.Node):
         try:
             # Parse IR codes
             ir_codes = self._parse_code_param('IR_CODES')
+            LOGGER.debug('Parsed %s IR code(s) from configuration.', len(ir_codes))
             for code_name, code_value in ir_codes.items():
                 self._create_or_update_code_node('ir', code_name, code_value)
             
             # Parse RF codes
             rf_codes = self._parse_code_param('RF_CODES')
+            LOGGER.debug('Parsed %s RF code(s) from configuration.', len(rf_codes))
             for code_name, code_value in rf_codes.items():
                 self._create_or_update_code_node('rf', code_name, code_value)
             
@@ -350,6 +401,7 @@ class BroadlinkNodeServer(udi_interface.Node):
             # Generate address (sanitize code name)
             addr_base = code_name.lower().replace(' ', '_').replace('-', '_')
             addr = f'{parent_type}_{addr_base}'
+            LOGGER.debug('Preparing code node: parent_type=%s code_name=%s address=%s', parent_type, code_name, addr)
             
             if addr in self.polyglot.nodes:
                 # Update existing node
@@ -506,20 +558,26 @@ class BroadlinkNodeServer(udi_interface.Node):
 def main():
     global ns
     try:
+        LOGGER.debug('Main startup entry entered.')
         # Create an instance of the Polyglot interface with no pre-registered node classes
         polyglot = udi_interface.Interface([])
+        LOGGER.debug('Polyglot interface created.')
 
         # Initialize the interface
         try:
             polyglot.start(VERSION)
+            LOGGER.debug('polyglot.start(VERSION) succeeded with VERSION=%s', VERSION)
         except TypeError:
             polyglot.start()
+            LOGGER.debug('polyglot.start() fallback succeeded.')
 
         # Instantiate the controller node
         ns = BroadlinkNodeServer(polyglot, 'broadlink_hub', 'broadlink_hub', 'Broadlink hub')
+        LOGGER.debug('BroadlinkNodeServer instance created.')
 
         # Signal that startup initialization is complete
         polyglot.ready()
+        LOGGER.debug('polyglot.ready() called; entering runForever().')
 
         # Enter main event loop waiting for messages from Polyglot
         polyglot.runForever()
