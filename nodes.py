@@ -31,10 +31,7 @@ class BroadlinkSetup(udi_interface.Node):
         {'driver': 'ST', 'value': 0, 'uom': 2},  # Status (0=offline, 1=online)
         {'driver': 'GV1', 'value': 0, 'uom': 2},  # Heartbeat (use GV1 per driver limits)
     ]
-    commands = {
-        'APSETUP': set_ap_mode,
-        'RESTART': restart,
-    }
+
     
     def __init__(self, polyglot, primary, address, name=None, private=False):
         """
@@ -110,7 +107,10 @@ class BroadlinkSetup(udi_interface.Node):
         except Exception as e:
             LOGGER.error(f'Exception in restart: {e}', exc_info=True)
 
-
+    commands = {
+        'APSETUP': set_ap_mode,
+        'RESTART': restart,
+    }
 # =====================================================================
 # BroadlinkIR: IR Parent Node
 # =====================================================================
@@ -124,9 +124,7 @@ class BroadlinkIR(udi_interface.Node):
         {'driver': 'ST', 'value': 0, 'uom': 2},  # Status
         {'driver': 'GV0', 'value': 0, 'uom': 25},  # Learning progress (0-100%)
     ]
-    commands = {
-        'LEARNCODE': learn_code,
-    }
+
     
     def __init__(self, polyglot, primary, address, name=None, private=False):
         """
@@ -249,7 +247,9 @@ class BroadlinkIR(udi_interface.Node):
             self.learning = False
     
     
-
+    commands = {
+        'LEARNCODE': learn_code,
+    }
 
 # =====================================================================
 # BroadlinkRF: RF Parent Node
@@ -265,9 +265,7 @@ class BroadlinkRF(udi_interface.Node):
         {'driver': 'ST', 'value': 0, 'uom': 2},  # Status
         {'driver': 'GV0', 'value': 0, 'uom': 25},  # Learning progress (0-100%)
     ]
-    commands = {
-        'LEARNCODE': learn_code,
-    }
+
     
     def __init__(self, polyglot, primary, address, name=None, private=False):
         """
@@ -402,7 +400,9 @@ class BroadlinkRF(udi_interface.Node):
             self.setDriver('GV0', 0)
             self.learning = False
     
-    
+    commands = {
+        'LEARNCODE': learn_code,
+    }    
 
 
 # =====================================================================
@@ -418,9 +418,7 @@ class BroadlinkCode(udi_interface.Node):
     drivers = [
         {'driver': 'ST', 'value': 0, 'uom': 2},  # Status
     ]
-    commands = {
-        'TXCODE': send_code,
-    }
+
     
     def __init__(self, polyglot, primary, address, parent, name, code_value, code_type):
         """
@@ -479,7 +477,9 @@ class BroadlinkCode(udi_interface.Node):
         
         except Exception as e:
             LOGGER.error(f'Exception in send_code: {e}', exc_info=True)
-
+    commands = {
+        'TXCODE': send_code,
+    }
 
 # =====================================================================
 # Command Handler Stubs (Called by udi_interface)
