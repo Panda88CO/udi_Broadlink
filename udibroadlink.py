@@ -60,6 +60,7 @@ class BroadlinkNodeServer(udi_interface.Node):
         self.ir_parent = None
         self.rf_parent = None
         self.code_nodes = {}  # {node_address: node_object}
+        self.n_queue = []
         self.custom_params = {}
         self.custom_params_done = False
         self.config_done = False
@@ -79,7 +80,7 @@ class BroadlinkNodeServer(udi_interface.Node):
         self.polyglot.subscribe(self.polyglot.DELETE, self.handle_delete)
         self.polyglot.subscribe(self.polyglot.POLL, self.poll)
         
-        self.polyglot.subscribe(self.polyglot.ADDNODEDONE, self.on_add_node_done)
+        self.polyglot.subscribe(self.polyglot.ADDNODEDONE, self.node_queue)
         LOGGER.debug('Subscribed to CUSTOMPARAMS/CONFIGDONE/STOP/START/DELETE/POLL/ADDNODEDONE events.')
 
         # Netro-style constructor behavior: explicitly add controller node.
@@ -94,19 +95,11 @@ class BroadlinkNodeServer(udi_interface.Node):
         except Exception as e:
             LOGGER.error(f'Controller addNode failed in __init__: {e}', exc_info=True)
 
-        # Wait briefly for the controller node to be visible in the node map.
-        for attempt in range(15):
-            try:
-                if self.address in getattr(self.polyglot, 'nodes', {}):
-                    self.controller_registered = True
-                    LOGGER.debug('Controller node registration confirmed on attempt %s.', attempt + 1)
-                    break
-            except Exception:
-                pass
-            LOGGER.debug('Controller node not yet visible in node map; wait attempt %s/15.', attempt + 1)
-            time.sleep(1)
+        self.controller_registered = self.wait_for_node_done(self.address)
         if not self.controller_registered:
             LOGGER.warning('Controller node registration not confirmed yet; startup will continue guarded.')
+        else:
+            LOGGER.debug('Controller node registration confirmed through ADDNODEDONE queue.')
         
         LOGGER.info('BroadlinkNodeServer initialized.')
     
@@ -129,6 +122,34 @@ class BroadlinkNodeServer(udi_interface.Node):
         """Mark configuration completion from Polyglot."""
         self.config_done = True
         LOGGER.debug('CONFIGDONE received.')
+
+    def node_queue(self, data, *args, **kwargs):
+        """Track ADDNODEDONE events in a queue like udiNetro."""
+        address = None
+        if isinstance(data, dict):
+            address = data.get('address')
+        elif isinstance(data, str):
+            address = data
+        if address:
+            self.n_queue.append(address)
+            LOGGER.debug('Queued ADDNODEDONE for address=%s queue_len=%s', address, len(self.n_queue))
+        else:
+            LOGGER.debug('ADDNODEDONE received without usable address: data=%s args=%s kwargs=%s', data, args, kwargs)
+
+    def wait_for_node_done(self, expected_address=None, timeout=15.0):
+        """Wait for an ADDNODEDONE event, optionally for a specific address."""
+        LOGGER.debug('Waiting for node done: expected_address=%s timeout=%s', expected_address, timeout)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.n_queue:
+                address = self.n_queue.pop(0)
+                LOGGER.debug('Dequeued ADDNODEDONE for address=%s', address)
+                if expected_address is None or address == expected_address:
+                    return True
+                LOGGER.debug('Ignoring ADDNODEDONE for unexpected address=%s while waiting for %s', address, expected_address)
+            time.sleep(0.1)
+        LOGGER.warning('Timed out waiting for ADDNODEDONE for address=%s', expected_address)
+        return False
     
     def handle_start(self):
         """
@@ -146,8 +167,7 @@ class BroadlinkNodeServer(udi_interface.Node):
         # Netro-style startup guard: allow time for initial config callbacks.
         wait_left = 15
         while wait_left > 0 and (
-            not self.controller_registered
-            or not (self.custom_params_done or self.config_done)
+            not (self.custom_params_done or self.config_done)
         ):
             time.sleep(1)
             wait_left -= 1
@@ -183,6 +203,10 @@ class BroadlinkNodeServer(udi_interface.Node):
         # Build code subnodes from configured parameters
         LOGGER.debug('Starting dynamic code node build phase.')
         self._build_code_nodes()
+
+        self.ready = True
+        self.setDriver('ST', 1, force=True)
+        LOGGER.debug('Startup completed; ready flag set and ST driver updated.')
         
         LOGGER.info('Node server startup sequence complete.')
     
@@ -199,19 +223,6 @@ class BroadlinkNodeServer(udi_interface.Node):
         Called when a node is deleted.
         """
         LOGGER.info('Delete event received.')
-    
-    def on_add_node_done(self, event, *args, **kwargs):
-        """
-        Handle ADDNODEDONE event. Called when all nodes have been added/synced.
-        This is the correct point to set ready=True and update drivers.
-        """
-        LOGGER.info('ADDNODEDONE event received. Nodes fully registered.')
-        LOGGER.debug('ADDNODEDONE payload: event=%s args=%s kwargs=%s', event, args, kwargs)
-        self.ready = True
-        
-        # Now safe to update drivers
-        self.setDriver('ST', 1, force=True)
-        LOGGER.info('Node server ready flag set to True.')
     
     def _discover_and_auth(self):
         """
@@ -312,6 +323,7 @@ class BroadlinkNodeServer(udi_interface.Node):
                 self.ir_parent = BroadlinkIR(self.polyglot, 'broadlink_hub', ir_address, 'Broadlink IR')
                 self.polyglot.addNode(self.ir_parent)
                 LOGGER.debug('IR parent addNode submitted.')
+                self.wait_for_node_done(ir_address)
             else:
                 self.ir_parent = self.polyglot.nodes[ir_address]
                 LOGGER.debug('IR parent node already present.')
@@ -324,6 +336,7 @@ class BroadlinkNodeServer(udi_interface.Node):
                 self.rf_parent = BroadlinkRF(self.polyglot, 'broadlink_hub', rf_address, 'Broadlink RF')
                 self.polyglot.addNode(self.rf_parent)
                 LOGGER.debug('RF parent addNode submitted.')
+                self.wait_for_node_done(rf_address)
             else:
                 self.rf_parent = self.polyglot.nodes[rf_address]
                 LOGGER.debug('RF parent node already present.')
@@ -421,6 +434,7 @@ class BroadlinkNodeServer(udi_interface.Node):
                     parent_type
                 )
                 self.polyglot.addNode(node)
+                self.wait_for_node_done(addr)
                 self.code_nodes[addr] = node
                 LOGGER.info(f'Created code node: {addr} ({code_name})')
         
