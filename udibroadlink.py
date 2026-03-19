@@ -38,7 +38,7 @@ class BroadlinkNodeServer(udi_interface.Node):
         Args:
             polyglot: UDI interface polyglot object
         """
-        # Controller node should be registered with primary, address, name and marked private
+        # Controller node should be registered with primary, address, name
         super().__init__(polyglot, primary, address, name)
         
         self.polyglot = polyglot
