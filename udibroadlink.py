@@ -17,6 +17,9 @@ import base64
 import sys
 from nodes import BroadlinkSetup, BroadlinkIR, BroadlinkRF, BroadlinkCode
 
+VERSION = '0.1.0'
+ns = None
+
 # =====================================================================
 # Logger Configuration
 # =====================================================================
@@ -51,10 +54,19 @@ class BroadlinkNodeServer(udi_interface.Node):
         self.ir_parent = None
         self.rf_parent = None
         self.code_nodes = {}  # {node_address: node_object}
+        self.custom_params = {}
+        self.custom_params_done = False
+        self.config_done = False
+        self.controller_registered = False
         
         # Handler bindings
         # Handler bindings (subscribe to events per PG examples)
         self.polyglot.subscribe(self.polyglot.CUSTOMPARAMS, self.handle_config)
+        try:
+            self.polyglot.subscribe(self.polyglot.CONFIGDONE, self.handle_config_done)
+        except Exception:
+            # Older/alternate interfaces may not expose CONFIGDONE
+            pass
         self.polyglot.subscribe(self.polyglot.STOP, self.handle_stop)
         self.polyglot.subscribe(self.polyglot.START, self.handle_start, address)
         self.polyglot.subscribe(self.polyglot.DELETE, self.handle_delete)
@@ -67,6 +79,28 @@ class BroadlinkNodeServer(udi_interface.Node):
         except Exception:
             # Some Polyglot versions may not expose ST constant; ignore if not available
             pass
+
+        # Netro-style constructor behavior: explicitly add controller node.
+        # This guarantees the primary node exists before adding child nodes.
+        try:
+            self.polyglot.addNode(self, conn_status=None, rename=True)
+        except TypeError:
+            # Fallback for interfaces without extended addNode kwargs.
+            self.polyglot.addNode(self)
+        except Exception as e:
+            LOGGER.error(f'Controller addNode failed in __init__: {e}', exc_info=True)
+
+        # Wait briefly for the controller node to be visible in the node map.
+        for _ in range(15):
+            try:
+                if self.address in getattr(self.polyglot, 'nodes', {}):
+                    self.controller_registered = True
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+        if not self.controller_registered:
+            LOGGER.warning('Controller node registration not confirmed yet; startup will continue guarded.')
         
         LOGGER.info('BroadlinkNodeServer initialized.')
     
@@ -81,13 +115,30 @@ class BroadlinkNodeServer(udi_interface.Node):
         
         # Extract custom parameters
         self.custom_params = config.get('customParams', {})
+        self.custom_params_done = True
         LOGGER.debug(f'Custom params: {list(self.custom_params.keys())}')
+
+    def handle_config_done(self):
+        """Mark configuration completion from Polyglot."""
+        self.config_done = True
+        LOGGER.debug('CONFIGDONE received.')
     
     def handle_start(self):
         """
         Called when the node server starts. Initialize discovery and nodes.
         """
         LOGGER.info('Node server starting...')
+
+        # Netro-style startup guard: allow time for initial config callbacks.
+        wait_left = 15
+        while wait_left > 0 and (
+            not self.controller_registered
+            or not (self.custom_params_done or self.config_done)
+        ):
+            time.sleep(1)
+            wait_left -= 1
+            if wait_left % 5 == 0:
+                LOGGER.info('Waiting for initial configuration callbacks...')
         
         # Set ready flag to False until nodes are fully initialized
         self.ready = False
@@ -464,16 +515,23 @@ class BroadlinkNodeServer(udi_interface.Node):
 # =====================================================================
 # Entry Point
 # =====================================================================
-if __name__ == '__main__':
+def main():
+    global ns
     try:
         # Create an instance of the Polyglot interface with no pre-registered node classes
         polyglot = udi_interface.Interface([])
 
         # Initialize the interface
-        polyglot.start()
+        try:
+            polyglot.start(VERSION)
+        except TypeError:
+            polyglot.start()
 
-        # Instantiate the controller node (this registers the node with Polyglot)
+        # Instantiate the controller node
         ns = BroadlinkNodeServer(polyglot, 'broadlink_hub', 'broadlink_hub', 'Broadlink hub')
+
+        # Signal that startup initialization is complete
+        polyglot.ready()
 
         # Enter main event loop waiting for messages from Polyglot
         polyglot.runForever()
@@ -482,3 +540,7 @@ if __name__ == '__main__':
     except Exception as e:
         LOGGER.error(f'Fatal error in main: {e}', exc_info=True)
         sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
