@@ -1,0 +1,25 @@
+ND-broadlinkhub-NAME=Broadlink Hub
+ND-broadlinkhub-ICON=GenericCtl
+ST-nlsbroadlinkhub-ST-NAME=Status
+ST-nlsbroadlinkhub-GV1-NAME=Heartbeat
+Heartbeat-0=Idle
+Heartbeat-1=Beat
+Status-0=Offline
+Status-1=Online
+
+ND-broadlinkir-NAME=Broadlink IR
+ND-broadlinkir-ICON=GenericCtl
+ST-nlsbroadlinkir-ST-NAME=Status
+ST-nlsbroadlinkir-GV0-NAME=Learning Progress
+CMD-nlsbroadlinkir-LEARNCODE-NAME=Learn IR Code
+
+ND-broadlinkrf-NAME=Broadlink RF
+ND-broadlinkrf-ICON=GenericCtl
+ST-nlsbroadlinkrf-ST-NAME=Status
+ST-nlsbroadlinkrf-GV0-NAME=Learning Progress
+CMD-nlsbroadlinkrf-LEARNCODE-NAME=Learn RF Code
+
+ND-broadlinkcode-NAME=Broadlink Code
+ND-broadlinkcode-ICON=GenericCtl
+ST-nlsbroadlinkcode-ST-NAME=Status
+CMD-nlsbroadlinkcode-TXCODE-NAME=Send Code

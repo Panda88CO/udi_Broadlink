@@ -33,8 +33,14 @@ class BroadlinkNodeServer(udi_interface.Node):
     """
     Main Node Server controller. Initializes all nodes and manages lifecycle.
     """
+
+    id = 'broadlinkhub'
+    drivers = [
+        {'driver': 'ST', 'value': 0, 'uom': 2},
+        {'driver': 'GV1', 'value': 0, 'uom': 2},
+    ]
     
-    def __init__(self, polyglot, primary='broadlink_hub', address='broadlink_hub', name='broadlink_hub'):
+    def __init__(self, polyglot, primary='broadlinkHub', address='broadlinkHub', name='Broadlink Hub'):
         """
         Initialize the node server.
         
@@ -326,7 +332,7 @@ class BroadlinkNodeServer(udi_interface.Node):
             LOGGER.debug('Checking IR parent node address=%s', ir_address)
             if ir_address not in self.polyglot.nodes:
                 LOGGER.info('Creating IR parent node...')
-                self.ir_parent = BroadlinkIR(self.polyglot, 'broadlink_hub', ir_address, 'Broadlink IR')
+                self.ir_parent = BroadlinkIR(self.polyglot, 'broadlinkHub', ir_address, 'Broadlink IR')
                 self.polyglot.addNode(self.ir_parent)
                 LOGGER.debug('IR parent addNode submitted.')
                 self.wait_for_node_done(ir_address)
@@ -339,7 +345,7 @@ class BroadlinkNodeServer(udi_interface.Node):
             LOGGER.debug('Checking RF parent node address=%s', rf_address)
             if rf_address not in self.polyglot.nodes:
                 LOGGER.info('Creating RF parent node...')
-                self.rf_parent = BroadlinkRF(self.polyglot, 'broadlink_hub', rf_address, 'Broadlink RF')
+                self.rf_parent = BroadlinkRF(self.polyglot, 'broadlinkHub', rf_address, 'Broadlink RF')
                 self.polyglot.addNode(self.rf_parent)
                 LOGGER.debug('RF parent addNode submitted.')
                 self.wait_for_node_done(rf_address)
@@ -432,7 +438,7 @@ class BroadlinkNodeServer(udi_interface.Node):
                 parent = self.ir_parent if parent_type == 'ir' else self.rf_parent
                 node = BroadlinkCode(
                     self.polyglot,
-                    'broadlink_hub',
+                    'broadlinkHub',
                     addr,
                     parent.address,
                     code_name,

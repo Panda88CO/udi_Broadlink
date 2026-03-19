@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<nodeDefs>
+  <nodeDef id="broadlinkhub" nls="nlsbroadlinkhub">
+    <editors />
+    <sts>
+      <st id="ST" editor="Status" />
+      <st id="GV1" editor="Heartbeat" />
+    </sts>
+    <cmds>
+      <sends>
+        <cmd id="DON" />
+        <cmd id="DOF" />
+      </sends>
+      <accepts>
+      </accepts>
+    </cmds>
+  </nodeDef>
+
+  <nodeDef id="broadlinkir" nls="nlsbroadlinkir">
+    <editors />
+    <sts>
+      <st id="ST" editor="Status" />
+      <st id="GV0" editor="Progress" />
+    </sts>
+    <cmds>
+      <sends>
+      </sends>
+      <accepts>
+        <cmd id="LEARNCODE" />
+      </accepts>
+    </cmds>
+  </nodeDef>
+
+  <nodeDef id="broadlinkrf" nls="nlsbroadlinkrf">
+    <editors />
+    <sts>
+      <st id="ST" editor="Status" />
+      <st id="GV0" editor="Progress" />
+    </sts>
+    <cmds>
+      <sends>
+      </sends>
+      <accepts>
+        <cmd id="LEARNCODE" />
+      </accepts>
+    </cmds>
+  </nodeDef>
+
+  <nodeDef id="broadlinkcode" nls="nlsbroadlinkcode">
+    <editors />
+    <sts>
+      <st id="ST" editor="Status" />
+    </sts>
+    <cmds>
+      <sends>
+      </sends>
+      <accepts>
+        <cmd id="TXCODE" />
+      </accepts>
+    </cmds>
+  </nodeDef>
+</nodeDefs>

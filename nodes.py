@@ -26,7 +26,7 @@ class BroadlinkSetup(udi_interface.Node):
     Handles AP provisioning and basic status.
     """
     
-    id = 'broadlink_hub'
+    id = 'broadlinkhub'
     drivers = [
         {'driver': 'ST', 'value': 0, 'uom': 2},  # Status (0=offline, 1=online)
         {'driver': 'GV1', 'value': 0, 'uom': 2},  # Heartbeat (use GV1 per driver limits)
@@ -119,7 +119,7 @@ class BroadlinkIR(udi_interface.Node):
     IR control parent node. Allows learning and managing IR codes.
     """
     
-    id = 'broadlink_ir'
+    id = 'broadlinkir'
     drivers = [
         {'driver': 'ST', 'value': 0, 'uom': 2},  # Status
         {'driver': 'GV0', 'value': 0, 'uom': 25},  # Learning progress (0-100%)
@@ -260,7 +260,7 @@ class BroadlinkRF(udi_interface.Node):
     Implements 2-step RF learning: sweep frequency, then learn.
     """
     
-    id = 'broadlink_rf'
+    id = 'broadlinkrf'
     drivers = [
         {'driver': 'ST', 'value': 0, 'uom': 2},  # Status
         {'driver': 'GV0', 'value': 0, 'uom': 25},  # Learning progress (0-100%)
@@ -414,7 +414,7 @@ class BroadlinkCode(udi_interface.Node):
     Supports transmission with TXCODE command.
     """
     
-    id = 'broadlink_code'
+    id = 'broadlinkcode'
     drivers = [
         {'driver': 'ST', 'value': 0, 'uom': 2},  # Status
     ]

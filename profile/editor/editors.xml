@@ -1,0 +1,11 @@
+<editors>
+  <editor id="Status">
+    <range uom="2" subset="0,1" nls="Status" />
+  </editor>
+  <editor id="Heartbeat">
+    <range uom="2" subset="0,1" nls="Heartbeat" />
+  </editor>
+  <editor id="Progress">
+    <range uom="25" min="0" max="100" prec="0" />
+  </editor>
+</editors>
