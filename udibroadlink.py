@@ -592,7 +592,7 @@ def main():
             LOGGER.debug('polyglot.start() fallback succeeded.')
 
         # Instantiate the controller node
-        ns = BroadlinkNodeServer(polyglot, 'broadlink_hub', 'broadlink_hub', 'Broadlink hub')
+        ns = BroadlinkNodeServer(polyglot, 'broadlinkHub', 'broadlinkHub', 'Broadlink Hub')
         LOGGER.debug('BroadlinkNodeServer instance created.')
 
         LOGGER.debug('Entering runForever() after constructor-managed ready/addNode ordering.')
