@@ -5,7 +5,8 @@ import sys
 
 import udi_interface
 
-from nodes import BroadlinkController, VERSION
+from device_manager import DeviceManager
+from nodes import VERSION
 
 LOGGER = udi_interface.LOGGER
 
@@ -14,7 +15,7 @@ if __name__ == "__main__":
         polyglot = udi_interface.Interface([])
         polyglot.start({"version": VERSION, "requestId": True})
         polyglot.setCustomParamsDoc()
-        BroadlinkController(polyglot, "setup", "setup", "Broadlink Setup")
+        DeviceManager(polyglot)
         polyglot.runForever()
     except (KeyboardInterrupt, SystemExit):
         sys.exit(0)
