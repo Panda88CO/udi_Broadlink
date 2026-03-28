@@ -8,6 +8,7 @@ from typing import Dict
 import udi_interface
 
 LOGGER = udi_interface.LOGGER
+VERSION = "0.1.0"
 
 
 class BaseNode(udi_interface.Node):
