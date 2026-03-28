@@ -13,7 +13,7 @@ class PluginConfig:
 
     user_id: str = ""
     user_password: str = ""
-    hub_ip: str = ""
+    hub_ips: list[str] = field(default_factory=list)
     wifi_ssid: str = ""
     wifi_password: str = ""
     wifi_security_mode: int = 4
@@ -82,10 +82,13 @@ def build_config(custom_params: dict) -> PluginConfig:
     except (TypeError, ValueError):
         wifi_security_mode = 4
 
+    # Parse HUB_IP as a space-separated list
+    hub_ips = str(params.get("HUB_IP", "")).strip().split()
+
     return PluginConfig(
         user_id=str(params.get("USER_ID", "")).strip(),
         user_password=str(params.get("USER_PASSWORD", "")).strip(),
-        hub_ip=str(params.get("HUB_IP", "")).strip(),
+        hub_ips=hub_ips,
         wifi_ssid=str(params.get("WIFI_SSID", "")).strip(),
         wifi_password=str(params.get("WIFI_PASSWORD", "")).strip(),
         wifi_security_mode=wifi_security_mode,

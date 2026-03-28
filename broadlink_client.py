@@ -21,9 +21,10 @@ from typing import Optional
 import broadlink
 
 
+
 class BroadlinkHubClient:
-    def __init__(self, hub_ip: Optional[str] = None, user_id: Optional[str] = None, user_password: Optional[str] = None):
-        self.hub_ip = hub_ip
+    def __init__(self, hub_ips: Optional[list[str]] = None, user_id: Optional[str] = None, user_password: Optional[str] = None):
+        self.hub_ips = hub_ips or []
         self.user_id = user_id
         self.user_password = user_password
         self.device = None
@@ -33,13 +34,13 @@ class BroadlinkHubClient:
         devices = broadlink.discover(timeout=timeout)
         if not devices:
             return None
-        if self.hub_ip:
+        if self.hub_ips:
             for dev in devices:
                 try:
                     host = dev.host[0]
                 except Exception:
                     continue
-                if host == self.hub_ip:
+                if host in self.hub_ips:
                     return dev
         return devices[0]
 

@@ -76,13 +76,13 @@ class DeviceManager:
         self._reconcile_nodes()
 
     def apply_config(self):
-        required_ok = bool(self.config.user_id and self.config.user_password and self.config.hub_ip)
+        required_ok = bool(self.config.user_id and self.config.user_password and self.config.hub_ips and len(self.config.hub_ips) > 0)
         if not required_ok:
             LOGGER.info("DeviceManager: missing required config, skipping client init")
             return
 
         self.client = BroadlinkHubClient(
-            hub_ip=self.config.hub_ip,
+            hub_ips=self.config.hub_ips,
             user_id=self.config.user_id,
             user_password=self.config.user_password,
         )
