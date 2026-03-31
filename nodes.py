@@ -12,6 +12,28 @@ VERSION = "0.1.0"
 
 
 class BaseNode(udi_interface.Node):
+    class BroadlinkHubNode(BaseNode):
+        """Controller node for Broadlink hub status and notices."""
+        id = "blhub"
+        drivers = [
+            {"driver": "ST", "value": 0, "uom": 2},  # 0=offline, 1=online
+            {"driver": "GV0", "value": 0, "uom": 56},  # Reserved for future use
+            {"driver": "TIME", "value": int(time.time()), "uom": 151},
+        ]
+
+        def __init__(self, polyglot, primary, address: str, name: str = "Broadlink Hub", controller=None):
+            super().__init__(polyglot, primary, address, name)
+            self.controller = controller
+
+        def set_online(self, online: bool):
+            self._set("ST", 1 if online else 0, 2)
+
+        def query(self, command=None):
+            self.set_online(self.controller.is_connected() if self.controller else False)
+
+        commands = {
+            "QUERY": query,
+        }
     """Common helpers shared by all nodes."""
 
     def _set(self, driver: str, value, uom: int | None = None, force: bool = False) -> None:

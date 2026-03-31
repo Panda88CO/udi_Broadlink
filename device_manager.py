@@ -9,10 +9,11 @@ import udi_interface
 from config_parser import PluginConfig, build_config
 from profile_json import PROFILE
 from broadlink_client import BroadlinkHubClient
-from nodes import BroadlinkRemoteNode, BroadlinkCodeNode
+from nodes import BroadlinkRemoteNode, BroadlinkCodeNode, BroadlinkHubNode
 
 LOGGER = udi_interface.LOGGER
 Custom = udi_interface.Custom
+
 
 
 class DeviceManager:
@@ -26,6 +27,7 @@ class DeviceManager:
         self.learned_ir_codes: Dict[str, str] = {}
         self.learned_rf_codes: Dict[str, str] = {}
 
+        self.hub_node: Optional[BroadlinkHubNode] = None
         self.ir_parent: Optional[BroadlinkRemoteNode] = None
         self.rf_parent: Optional[BroadlinkRemoteNode] = None
         self.ir_nodes: Dict[str, BroadlinkCodeNode] = {}
@@ -38,8 +40,16 @@ class DeviceManager:
         self.poly.subscribe(self.poly.CUSTOMDATA, self.handle_custom_data)
         self.poly.subscribe(self.poly.DISCOVER, self.discover)
 
+        self._ensure_hub_node()
         self.poly.updateProfile()
         self.poly.ready()
+
+    def _ensure_hub_node(self):
+        if not self.hub_node:
+            addr = self.poly.getValidAddress("blhub")
+            name = "Broadlink Hub"
+            self.hub_node = BroadlinkHubNode(self.poly, "", addr, name, self)
+            self.poly.addNode(self.hub_node, rename=True)
 
     def start(self):
         self.apply_config()
@@ -52,8 +62,10 @@ class DeviceManager:
             return
         if self.client:
             online = 1 if self.client.refresh() else 0
-            # store as GV1 on a logical controller? Use notices for now
             LOGGER.debug("DeviceManager poll: client online=%s", online)
+        # Always update hub node status
+        if self.hub_node:
+            self.hub_node.set_online(self.is_connected())
         self._reconcile_nodes()
 
     def discover(self, *_):
@@ -79,6 +91,8 @@ class DeviceManager:
         required_ok = bool(self.config.user_id and self.config.user_password and self.config.hub_ips and len(self.config.hub_ips) > 0)
         if not required_ok:
             LOGGER.info("DeviceManager: missing required config, skipping client init")
+            if self.hub_node:
+                self.hub_node.set_online(False)
             return
 
         self.client = BroadlinkHubClient(
@@ -92,6 +106,8 @@ class DeviceManager:
             LOGGER.error("DeviceManager: client connect failed: %s", err)
             self.client = None
 
+        if self.hub_node:
+            self.hub_node.set_online(self.is_connected())
         self._reconcile_nodes()
 
     def is_connected(self) -> bool:
