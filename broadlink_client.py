@@ -14,11 +14,15 @@ The implementation attempts to discover a matching device by IP when `hub_ip` is
 and falls back to the first discoverable device. It uses `dev.auth()` where available.
 """
 
+
 import time
 import binascii
 from typing import Optional
+import logging
 
 import broadlink
+
+
 
 
 
@@ -27,104 +31,146 @@ class BroadlinkHubClient:
         self.hub_ips = hub_ips or []
         self.user_id = user_id
         self.user_password = user_password
-        self.device = None
+        self.devices = []  # List of all discovered/connected devices
         self.connected = False
+        self.logger = logging.getLogger("BroadlinkHubClient")
+        if not self.logger.hasHandlers():
+            logging.basicConfig(level=logging.DEBUG)
 
-    def _discover_device(self, timeout: int = 5):
+    def _discover_devices(self, timeout: int = 5):
+        found_devices = []
+        found_ips = set()
+        # First, try to connect directly to each specified IP
+        if self.hub_ips:
+            for ip in self.hub_ips:
+                self.logger.debug(f"Attempting direct connection to Broadlink device at {ip}")
+                try:
+                    devs = broadlink.hello(ip)
+                    if devs:
+                        dev = devs[0]
+                        self.logger.info(f"Discovered device at {ip} using hello(): {dev}")
+                        found_devices.append(dev)
+                        found_ips.add(ip)
+                        continue
+                except Exception as e:
+                    self.logger.debug(f"hello() failed for {ip}: {e}")
+                try:
+                    dev = broadlink.gendevice(0x2737, (ip, 80))
+                    dev.auth()
+                    self.logger.info(f"Connected to device at {ip} using gendevice: {dev}")
+                    found_devices.append(dev)
+                    found_ips.add(ip)
+                except Exception as e:
+                    self.logger.debug(f"gendevice failed for {ip}: {e}")
+        # Fallback to discovery for any additional devices
+        self.logger.debug("Falling back to broadlink.discover()")
         devices = broadlink.discover(timeout=timeout)
         if not devices:
-            return None
-        if self.hub_ips:
+            self.logger.warning("No Broadlink devices discovered on network")
+        else:
             for dev in devices:
                 try:
                     host = dev.host[0]
                 except Exception:
                     continue
-                if host in self.hub_ips:
-                    return dev
-        return devices[0]
+                if host not in found_ips:
+                    self.logger.info(f"Found additional device from discovery at {host}: {dev}")
+                    found_devices.append(dev)
+                    found_ips.add(host)
+        if not found_devices:
+            self.logger.warning("No Broadlink devices found via direct IP or discovery.")
+        return found_devices
 
     def connect(self):
-        dev = self._discover_device()
-        if dev is None:
+        self.logger.debug("Connecting to Broadlink devices...")
+        devices = self._discover_devices()
+        if not devices:
+            self.logger.error("No Broadlink devices discovered on network")
             raise RuntimeError("No Broadlink devices discovered on network")
-        try:
-            dev.auth()
-        except Exception:
-            # Some devices/auth flows may fail but still be usable; continue
-            pass
-        self.device = dev
+        # Try to authenticate all devices (if possible)
+        for dev in devices:
+            try:
+                dev.auth()
+                self.logger.info(f"Authenticated with device: {dev}")
+            except Exception as e:
+                self.logger.warning(f"Device auth failed or not required: {e}")
+        self.devices = devices
         self.connected = True
+        self.logger.info(f"Connected to {len(devices)} Broadlink device(s)")
 
     def refresh(self) -> bool:
-        if not self.device:
+        if not self.devices:
             return False
-        try:
-            # Some devices respond to auth as a lightweight check
-            self.device.auth()
-            return True
-        except Exception:
-            return False
-
-    def learn_ir(self, timeout: int = 30) -> bytes:
-        if not self.device:
-            raise RuntimeError("Device not connected")
-        # Enter learning mode and poll for data
-        try:
-            self.device.enter_learning()
-        except Exception:
-            # Some devices use different API; try fallback
-            pass
-
-        start = time.time()
-        while time.time() - start < timeout:
+        refreshed = False
+        for dev in self.devices:
             try:
-                data = self.device.check_data()
-                if data:
-                    if isinstance(data, bytes):
-                        return data
-                    try:
-                        return binascii.unhexlify(data)
-                    except Exception:
-                        return bytes(data)
+                dev.auth()
+                refreshed = True
+            except Exception:
+                continue
+        return refreshed
+
+    def learn_ir(self, timeout: int = 30) -> dict:
+        if not self.devices:
+            raise RuntimeError("No devices connected")
+        results = {}
+        for dev in self.devices:
+            try:
+                dev.enter_learning()
             except Exception:
                 pass
+        start = time.time()
+        while time.time() - start < timeout:
+            for dev in self.devices:
+                try:
+                    data = dev.check_data()
+                    if data:
+                        if isinstance(data, bytes):
+                            results[dev.host[0]] = data
+                        else:
+                            try:
+                                results[dev.host[0]] = binascii.unhexlify(data)
+                            except Exception:
+                                results[dev.host[0]] = bytes(data)
+                except Exception:
+                    continue
+            if results:
+                return results
             time.sleep(0.5)
-        raise TimeoutError("IR learn timed out")
+        raise TimeoutError("IR learn timed out for all devices")
 
-    def learn_rf(self, timeout: int = 30) -> bytes:
+    def learn_rf(self, timeout: int = 30) -> dict:
         # Many Broadlink RM series use the same learning API for RF
         return self.learn_ir(timeout=timeout)
 
     def send_code(self, packet_hex_or_bytes):
-        if not self.device:
-            raise RuntimeError("Device not connected")
+        if not self.devices:
+            raise RuntimeError("No devices connected")
         if isinstance(packet_hex_or_bytes, str):
             try:
                 packet = binascii.unhexlify(packet_hex_or_bytes)
             except Exception:
-                # maybe it's a raw hex without separators
                 packet = packet_hex_or_bytes.encode()
         else:
             packet = packet_hex_or_bytes
 
-        # Use device.send_data where available
-        if hasattr(self.device, "send_data"):
-            try:
-                self.device.send_data(packet)
-                return True
-            except Exception as err:
-                raise RuntimeError(f"send_data failed: {err}")
-
-        # Fallback to send_packet if available
-        if hasattr(self.device, "send_packet"):
-            try:
-                self.device.send_packet(packet)
-                return True
-            except Exception as err:
-                raise RuntimeError(f"send_packet failed: {err}")
-
-        raise NotImplementedError("Device does not support sending data via known APIs")
+        results = {}
+        for dev in self.devices:
+            sent = False
+            if hasattr(dev, "send_data"):
+                try:
+                    dev.send_data(packet)
+                    sent = True
+                except Exception as err:
+                    self.logger.warning(f"send_data failed for {dev.host[0]}: {err}")
+            if not sent and hasattr(dev, "send_packet"):
+                try:
+                    dev.send_packet(packet)
+                    sent = True
+                except Exception as err:
+                    self.logger.warning(f"send_packet failed for {dev.host[0]}: {err}")
+            results[dev.host[0]] = sent
+        return results
 
     def provision_ap(self, ssid, password, security_mode=None, setup_ip=None):
         # python-broadlink doesn't provide a generic AP provisioning helper across all devices.
