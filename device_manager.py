@@ -40,9 +40,10 @@ class DeviceManager:
         self.poly.subscribe(self.poly.CUSTOMDATA, self.handle_custom_data)
         self.poly.subscribe(self.poly.DISCOVER, self.discover)
 
-        self._ensure_hub_node()
+        
         self.poly.updateProfile()
         self.poly.ready()
+        self._ensure_hub_node()
 
     def _ensure_hub_node(self):
         if not self.hub_node:
