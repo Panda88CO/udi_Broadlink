@@ -41,6 +41,7 @@ class BroadlinkHubClient:
         found_devices = []
         found_ips = set()
         # First, try to connect directly to each specified IP
+        logging.debug(f"Starting device discovery with specified hub IPs: {self.hub_ips}")
         if self.hub_ips:
             for ip in self.hub_ips:
                 self.logger.debug(f"Attempting direct connection to Broadlink device at {ip}")
